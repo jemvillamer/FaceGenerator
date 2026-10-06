@@ -54,6 +54,19 @@ def _cpu_conv2d_transpose(value, filters=None, output_shape=None, strides=None,
     return _orig_conv2d_transpose(value, filters, output_shape, strides, padding, data_format, dilations, name)
 tf.nn.conv2d_transpose = _cpu_conv2d_transpose
 
+_orig_depthwise_conv2d = tf.nn.depthwise_conv2d
+def _cpu_depthwise_conv2d(input, filter, strides, padding, rate=None,
+                          name=None, data_format=None):
+    if data_format == 'NCHW':
+        input = tf.transpose(input, [0, 2, 3, 1])
+        strides = [strides[0], strides[2], strides[3], strides[1]]
+        result = _orig_depthwise_conv2d(input, filter, strides, padding,
+                                        rate=rate, name=name, data_format='NHWC')
+        return tf.transpose(result, [0, 3, 1, 2])
+    return _orig_depthwise_conv2d(input, filter, strides, padding,
+                                  rate=rate, name=name, data_format=data_format)
+tf.nn.depthwise_conv2d = _cpu_depthwise_conv2d
+
 _orig_avg_pool = tf.nn.avg_pool
 def _cpu_avg_pool(value, ksize, strides, padding, data_format='NHWC', name=None, input=None):
     val = value if value is not None else input
@@ -89,8 +102,8 @@ def parse_args():
                    help='Number of random Z vectors to sample (default 2000)')
     p.add_argument('--seed',    type=int, default=0,
                    help='Master RNG seed for reproducibility')
-    p.add_argument('--thumb',   type=int, default=112,
-                   help='Thumbnail size passed to InsightFace (112 is its native input)')
+    p.add_argument('--thumb',   type=int, default=160,
+                   help='Thumbnail size passed to InsightFace (must be a multiple of 32)')
     p.add_argument('--alpha',   type=float, default=1e-3,
                    help='Ridge regularisation strength')
     p.add_argument('--out',     default=os.path.join('cache', 'age_regression.npz'),

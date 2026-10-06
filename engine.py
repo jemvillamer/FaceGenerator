@@ -244,7 +244,7 @@ class _AgeEstimator:
             app = FaceAnalysis(name='buffalo_l',
                                allowed_modules=['detection', 'genderage'],
                                providers=['CPUExecutionProvider'])
-            app.prepare(ctx_id=-1, det_size=(112, 112))
+            app.prepare(ctx_id=-1, det_size=(160, 160))
             self._app = app
             self._available = True
         except Exception as e:
@@ -256,15 +256,19 @@ class _AgeEstimator:
         """img_rgb: HxWx3 uint8.  Returns float age or None."""
         if not self._available:
             return None
-        import cv2
-        img_bgr = cv2.cvtColor(
-            np.array(PIL.Image.fromarray(img_rgb).resize((112, 112))),
-            cv2.COLOR_RGB2BGR)
-        faces = self._app.get(img_bgr)
-        if not faces:
+        try:
+            import cv2
+            img_bgr = cv2.cvtColor(
+                np.array(PIL.Image.fromarray(img_rgb).resize((160, 160))),
+                cv2.COLOR_RGB2BGR)
+            faces = self._app.get(img_bgr)
+            if not faces:
+                return None
+            areas = [(f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]) for f in faces]
+            return float(faces[int(np.argmax(areas))].age)
+        except Exception as e:
+            print(f"[AgeEstimator] estimate() failed: {e}")
             return None
-        areas = [(f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]) for f in faces]
-        return float(faces[int(np.argmax(areas))].age)
 
 
 def load_model():
