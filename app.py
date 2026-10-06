@@ -1,191 +1,13 @@
 import sys
 import os
-import pickle
 import numpy as np
-import PIL.Image
+from engine import ModelLoaderThread, GeneratorThread
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QSpinBox, QComboBox,
                              QPushButton, QProgressBar, QMessageBox, QFileDialog,
                              QFrame, QSizePolicy)
-from PyQt5.QtCore import QThread, pyqtSignal, Qt
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QImage
-import tensorflow as tf
-
-# ---------------------------------------------------------------------------
-# CPU compatibility monkey-patches
-# The pretrained StyleGAN pkl contains frozen graph nodes that use NCHW format,
-# which TF does NOT support on CPU for several ops. We intercept these calls
-# and transparently redirect them to NHWC by transposing around the op.
-# This must happen BEFORE any model loading or TF graph construction.
-# ---------------------------------------------------------------------------
-
-_orig_conv2d_transpose = tf.nn.conv2d_transpose
-def _cpu_conv2d_transpose(value, filters=None, output_shape=None, strides=None,
-                           padding='SAME', data_format='NHWC', dilations=None,
-                           name=None, filter=None):
-    filters = filters if filters is not None else filter
-    if data_format == 'NCHW':
-        value = tf.transpose(value, [0, 2, 3, 1])
-        if isinstance(output_shape, (list, tuple)):
-            output_shape = [output_shape[0], output_shape[2], output_shape[3], output_shape[1]]
-        else:
-            output_shape = tf.stack([output_shape[0], output_shape[2], output_shape[3], output_shape[1]])
-        if strides is not None and len(strides) == 4:
-            strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_conv2d_transpose(value, filters, output_shape, strides,
-                                        padding, 'NHWC', dilations, name)
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_conv2d_transpose(value, filters, output_shape, strides,
-                                   padding, data_format, dilations, name)
-tf.nn.conv2d_transpose = _cpu_conv2d_transpose
-
-_orig_depthwise_conv2d = tf.nn.depthwise_conv2d
-def _cpu_depthwise_conv2d(input, filter, strides, padding, rate=None,
-                           name=None, data_format=None):
-    if data_format == 'NCHW':
-        input = tf.transpose(input, [0, 2, 3, 1])
-        strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_depthwise_conv2d(input, filter, strides, padding,
-                                         rate=rate, name=name, data_format='NHWC')
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_depthwise_conv2d(input, filter, strides, padding,
-                                   rate=rate, name=name, data_format=data_format)
-tf.nn.depthwise_conv2d = _cpu_depthwise_conv2d
-
-_orig_avg_pool = tf.nn.avg_pool
-def _cpu_avg_pool(value, ksize, strides, padding, data_format='NHWC', name=None, input=None):
-    val = value if value is not None else input
-    if data_format == 'NCHW':
-        val = tf.transpose(val, [0, 2, 3, 1])
-        ksize   = [ksize[0],   ksize[2],   ksize[3],   ksize[1]]
-        strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_avg_pool(val, ksize, strides, padding, 'NHWC', name)
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_avg_pool(val, ksize, strides, padding, data_format, name)
-tf.nn.avg_pool = _cpu_avg_pool
-
-_orig_conv2d = tf.nn.conv2d
-def _cpu_conv2d(input, filter=None, strides=None, padding=None, use_cudnn_on_gpu=True,
-                data_format='NHWC', dilations=None, name=None, filters=None):
-    filt = filter if filter is not None else filters
-    if data_format == 'NCHW':
-        input = tf.transpose(input, [0, 2, 3, 1])
-        if strides is not None and len(strides) == 4:
-            strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_conv2d(input, filt, strides, padding,
-                              use_cudnn_on_gpu, 'NHWC', dilations, name)
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_conv2d(input, filt, strides, padding,
-                        use_cudnn_on_gpu, data_format, dilations, name)
-tf.nn.conv2d = _cpu_conv2d
-
-# ---------------------------------------------------------------------------
-
-import dnnlib
-import dnnlib.tflib as tflib
-import config
-
-
-# Define latent directions stub
-class LatentDirections:
-    def __init__(self):
-        # Stub for latent directions
-        # Here you would load your latent direction vectors (e.g., numpy arrays)
-        # self.age_direction = np.load('age_direction.npy')
-        pass
-
-    def apply_filters(self, latents, age, gender, ethnicity):
-        """
-        Stub function: modify latents based on filter values.
-        You can plug in your own latent direction vectors here later.
-        For example:
-            if gender == 'Female':
-                latents += self.gender_direction * weight
-        """
-        return latents
-
-
-def load_model():
-    """Initialize TF and load the pretrained StyleGAN model."""
-    import gdown
-
-    tflib.init_tf({"allow_soft_placement": True, "log_device_placement": False})
-
-    os.makedirs(config.cache_dir, exist_ok=True)
-    model_path = os.path.join(config.cache_dir, 'karras2019stylegan-ffhq-1024x1024.pkl')
-
-    if not os.path.exists(model_path):
-        print("Downloading pretrained model (~350MB)...")
-        gdown.download(id='1MEGjdvVpUsu1jB4zrXZN7Y4kBBOzizDQ', output=model_path, quiet=False)
-
-    print("Loading model...")
-    with open(model_path, 'rb') as f:
-        _G, _D, Gs = pickle.load(f)
-
-    print("Model loaded successfully.")
-    return Gs, tf.get_default_session(), tf.get_default_graph()
-
-
-class GeneratorThread(QThread):
-    progress = pyqtSignal(int)
-    finished = pyqtSignal(str)
-    preview  = pyqtSignal(np.ndarray)
-    error    = pyqtSignal(str)
-
-    def __init__(self, num_images, age, gender, ethnicity, output_dir, Gs, session, graph):
-        super().__init__()
-        self.num_images = num_images
-        self.age        = age
-        self.gender     = gender
-        self.ethnicity  = ethnicity
-        self.output_dir = output_dir
-        self.Gs         = Gs
-        self.session    = session
-        self.graph      = graph
-
-    def run(self):
-        try:
-            fmt = dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True)
-            latent_modifier = LatentDirections()
-            os.makedirs(self.output_dir, exist_ok=True)
-
-            with self.graph.as_default():
-                with self.session.as_default():
-                    for i in range(self.num_images):
-                        if self.isInterruptionRequested():
-                            break
-                        rnd = np.random.RandomState(None)
-                        latents = rnd.randn(1, self.Gs.input_shape[1])
-                        latents = latent_modifier.apply_filters(
-                            latents, self.age, self.gender, self.ethnicity)
-                        images = self.Gs.run(latents, None, truncation_psi=0.7,
-                                            randomize_noise=True, output_transform=fmt)
-                        img_data = images[0]
-                        png_filename = os.path.join(self.output_dir, f'generated_{i:04d}.png')
-                        PIL.Image.fromarray(img_data, 'RGB').save(png_filename)
-                        self.progress.emit(i + 1)
-                        self.preview.emit(img_data)
-
-            self.finished.emit(
-                f"Successfully generated {self.num_images} images in:\n{self.output_dir}")
-        except Exception as e:
-            import traceback
-            self.error.emit(traceback.format_exc())
-
-
-class ModelLoaderThread(QThread):
-    """Loads the model in a background thread so the UI doesn't freeze."""
-    model_loaded = pyqtSignal(object, object, object)
-    error        = pyqtSignal(str)
-
-    def run(self):
-        try:
-            Gs, session, graph = load_model()
-            self.model_loaded.emit(Gs, session, graph)
-        except Exception as e:
-            import traceback
-            self.error.emit(traceback.format_exc())
-
 
 def load_stylesheet():
     """Load the QSS stylesheet from style.qss next to this script."""
@@ -280,7 +102,7 @@ class FaceGeneratorApp(QMainWindow):
         lbl_age.setObjectName("field_label")
         vl.addWidget(lbl_age)
         self.age_combo = QComboBox()
-        self.age_combo.addItems(["Any", "Child", "Young Adult", "Middle Aged", "Senior"])
+        self.age_combo.addItems(["Any", "1-11 years old", "12-18 years old", "19-25 years old", "26-35 years old", "35-50 years old", "50+ years old"])
         vl.addWidget(self.age_combo)
 
         lbl_gender = QLabel("Gender:")
@@ -290,12 +112,7 @@ class FaceGeneratorApp(QMainWindow):
         self.gender_combo.addItems(["Any", "Male", "Female"])
         vl.addWidget(self.gender_combo)
 
-        lbl_eth = QLabel("Ethnicity:")
-        lbl_eth.setObjectName("field_label")
-        vl.addWidget(lbl_eth)
-        self.eth_combo = QComboBox()
-        self.eth_combo.addItems(["Any", "Asian", "Black", "White", "Hispanic", "Indian"])
-        vl.addWidget(self.eth_combo)
+
 
         vl.addWidget(self._divider())
 
@@ -369,7 +186,6 @@ class FaceGeneratorApp(QMainWindow):
         num_images = self.num_spin.value()
         age        = self.age_combo.currentText()
         gender     = self.gender_combo.currentText()
-        ethnicity  = self.eth_combo.currentText()
         out_dir    = self.out_label.text()
 
         if out_dir in ("output/", ""):
@@ -384,7 +200,7 @@ class FaceGeneratorApp(QMainWindow):
             f"Status: Generating {num_images} image{'s' if num_images > 1 else ''}...")
 
         self.thread = GeneratorThread(
-            num_images, age, gender, ethnicity, out_dir,
+            num_images, age, gender, out_dir,
             self.Gs, self.tf_session, self.tf_graph)
         self.thread.progress.connect(self.update_progress)
         self.thread.preview.connect(self.update_preview)
