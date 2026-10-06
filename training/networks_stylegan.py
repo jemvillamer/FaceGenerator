@@ -1,4 +1,4 @@
-﻿# Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
 #
 # This work is licensed under the Creative Commons Attribution-NonCommercial
 # 4.0 International License. To view a copy of this license, visit
@@ -40,11 +40,14 @@ def _blur2d(x, f=[1,2,1], normalize=True, flip=False, stride=1):
         return x
 
     # Convolve using depthwise_conv2d.
+    # CPU does not support NCHW for depthwise_conv2d, so we transpose to NHWC and back.
     orig_dtype = x.dtype
     x = tf.cast(x, tf.float32)  # tf.nn.depthwise_conv2d() doesn't support fp16
     f = tf.constant(f, dtype=x.dtype, name='filter')
-    strides = [1, 1, stride, stride]
-    x = tf.nn.depthwise_conv2d(x, f, strides=strides, padding='SAME', data_format='NCHW')
+    strides = [1, stride, stride, 1]
+    x = tf.transpose(x, [0, 2, 3, 1])  # NCHW -> NHWC
+    x = tf.nn.depthwise_conv2d(x, f, strides=strides, padding='SAME', data_format='NHWC')
+    x = tf.transpose(x, [0, 3, 1, 2])  # NHWC -> NCHW
     x = tf.cast(x, orig_dtype)
     return x
 
@@ -85,9 +88,11 @@ def _downscale2d(x, factor=2, gain=1):
         return x
 
     # Large factor => downscale using tf.nn.avg_pool().
-    # NOTE: Requires tf_config['graph_options.place_pruned_graph']=True to work.
-    ksize = [1, 1, factor, factor]
-    return tf.nn.avg_pool(x, ksize=ksize, strides=ksize, padding='VALID', data_format='NCHW')
+    # CPU does not support NCHW for avg_pool, so we transpose to NHWC and back.
+    ksize = [1, factor, factor, 1]
+    x = tf.transpose(x, [0, 2, 3, 1])  # NCHW -> NHWC
+    x = tf.nn.avg_pool(x, ksize=ksize, strides=ksize, padding='VALID', data_format='NHWC')
+    return tf.transpose(x, [0, 3, 1, 2])  # NHWC -> NCHW
 
 #----------------------------------------------------------------------------
 # High-level ops for manipulating 4D activation tensors.
@@ -165,7 +170,10 @@ def conv2d(x, fmaps, kernel, **kwargs):
     assert kernel >= 1 and kernel % 2 == 1
     w = get_weight([kernel, kernel, x.shape[1].value, fmaps], **kwargs)
     w = tf.cast(w, x.dtype)
-    return tf.nn.conv2d(x, w, strides=[1,1,1,1], padding='SAME', data_format='NCHW')
+    # CPU: transpose to NHWC, run conv2d, transpose back to NCHW
+    x = tf.transpose(x, [0, 2, 3, 1])  # NCHW -> NHWC
+    x = tf.nn.conv2d(x, w, strides=[1,1,1,1], padding='SAME', data_format='NHWC')
+    return tf.transpose(x, [0, 3, 1, 2])  # NHWC -> NCHW
 
 #----------------------------------------------------------------------------
 # Fused convolution + scaling.
@@ -173,39 +181,14 @@ def conv2d(x, fmaps, kernel, **kwargs):
 
 def upscale2d_conv2d(x, fmaps, kernel, fused_scale='auto', **kwargs):
     assert kernel >= 1 and kernel % 2 == 1
-    assert fused_scale in [True, False, 'auto']
-    if fused_scale == 'auto':
-        fused_scale = min(x.shape[2:]) * 2 >= 128
-
-    # Not fused => call the individual ops directly.
-    if not fused_scale:
-        return conv2d(upscale2d(x), fmaps, kernel, **kwargs)
-
-    # Fused => perform both ops simultaneously using tf.nn.conv2d_transpose().
-    w = get_weight([kernel, kernel, x.shape[1].value, fmaps], **kwargs)
-    w = tf.transpose(w, [0, 1, 3, 2]) # [kernel, kernel, fmaps_out, fmaps_in]
-    w = tf.pad(w, [[1,1], [1,1], [0,0], [0,0]], mode='CONSTANT')
-    w = tf.add_n([w[1:, 1:], w[:-1, 1:], w[1:, :-1], w[:-1, :-1]])
-    w = tf.cast(w, x.dtype)
-    os = [tf.shape(x)[0], fmaps, x.shape[2] * 2, x.shape[3] * 2]
-    return tf.nn.conv2d_transpose(x, w, os, strides=[1,1,2,2], padding='SAME', data_format='NCHW')
+    # Force fused_scale=False: conv2d_transpose with NCHW is not supported on CPU.
+    # The unfused path uses tf.tile for upscaling which works on CPU.
+    return conv2d(upscale2d(x), fmaps, kernel, **kwargs)
 
 def conv2d_downscale2d(x, fmaps, kernel, fused_scale='auto', **kwargs):
     assert kernel >= 1 and kernel % 2 == 1
-    assert fused_scale in [True, False, 'auto']
-    if fused_scale == 'auto':
-        fused_scale = min(x.shape[2:]) >= 128
-
-    # Not fused => call the individual ops directly.
-    if not fused_scale:
-        return downscale2d(conv2d(x, fmaps, kernel, **kwargs))
-
-    # Fused => perform both ops simultaneously using tf.nn.conv2d().
-    w = get_weight([kernel, kernel, x.shape[1].value, fmaps], **kwargs)
-    w = tf.pad(w, [[1,1], [1,1], [0,0], [0,0]], mode='CONSTANT')
-    w = tf.add_n([w[1:, 1:], w[:-1, 1:], w[1:, :-1], w[:-1, :-1]]) * 0.25
-    w = tf.cast(w, x.dtype)
-    return tf.nn.conv2d(x, w, strides=[1,1,2,2], padding='SAME', data_format='NCHW')
+    # Force unfused path: fused conv2d with NCHW stride>1 is not supported on CPU.
+    return downscale2d(conv2d(x, fmaps, kernel, **kwargs))
 
 #----------------------------------------------------------------------------
 # Apply bias to the given activation tensor.
