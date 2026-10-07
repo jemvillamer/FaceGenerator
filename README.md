@@ -133,6 +133,34 @@ FaceGenerator/
 |-- config.py                 # Paths (cache dir, model dir)
 |-- style.qss                 # Qt stylesheet for the UI
 |-- requirements.txt          # Pinned Python dependencies
+├── ui/
+│   ├── window.py                   # FaceGeneratorApp: __init__ and wiring only
+│   │                               
+│   ├── sidebar.py                  # build_sidebar(window): output, filters, status card, Generate button
+│   │
+│   ├── preview_panel.py             # Main preview area: toolbar, canvas, thumbnail strip
+│   │
+│   ├── widgets.py                  # Reusable custom Qt widgets 
+│   │
+│   ├── icons.py                    # SVG icon system
+│   │
+│   ├── qt_helpers.py               # Qt conversion/helper functions
+│   │
+│   ├── theme.py                    # stylesheet loading and the dropdown-arrow icon files
+│   │
+│   ├── paths.py                    # project folder and default output folder
+│   │
+│   ├── constants.py                # UI constants
+│   │
+│   ├── controls.py                 # Control behaviour: image-count stepper, gender, reset
+│   │
+│   ├── status.py                   # Status card behaviour
+│   │
+│   ├── generation.py               # Generation workflow: model loading, output folder, generate workflow
+│   │
+│   ├── gallery.py                  # Gallery behaviour: preview navigation and thumbnail strip
+│   │
+│   └── image_actions.py            # Image operations: Save as, Copy, Delete
 |
 |-- scripts/
 |   `-- fit_age_direction.py  # One-time age calibration script
