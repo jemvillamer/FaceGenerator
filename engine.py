@@ -139,7 +139,7 @@ class LatentDirections:
                 "19-25 years old": -0.3,
                 "26-35 years old":  0.4,
                 "35-50 years old":  1.5,
-                "50+ years old":    2.5,
+                "50+ years old":    3.5,   # raised: model skews young
             }
             print("[LatentDirections] age_regression.npz not found — using "
                   "InterFaceGAN SVM boundary as fallback. "
@@ -174,16 +174,16 @@ class LatentDirections:
         """Predict age for a single z vector (shape (512,))."""
         return float(z.ravel() @ self.age_coef + self.age_bias)
 
-    def _set_age(self, z, target_age):
+    def _set_age(self, z, target_age, max_shift=4.0):
         """
         Move z so that its predicted age equals target_age.
-        Only called in regression mode. Clamps the shift to ±MAX_SHIFT
+        Only called in regression mode. Clamps the shift to ±max_shift
         so the latent never leaves the model's training distribution.
+        Extreme age buckets pass a higher max_shift (up to 7.0).
         """
-        MAX_SHIFT = 4.0   # empirical safe maximum in Z-space norm
         z = z.astype('float64')
         current = float(z.ravel() @ self.age_coef + self.age_bias)
-        delta   = float(np.clip(target_age - current, -MAX_SHIFT, MAX_SHIFT))
+        delta   = float(np.clip(target_age - current, -max_shift, max_shift))
         return z + delta * self.age_dir.reshape(1, -1)
 
     def apply_filters(self, latents, age, gender):
@@ -195,15 +195,15 @@ class LatentDirections:
 
         # ── Age filter ───────────────────────────────────────────────────
         if age != "Any" and age in AGE_RANGES:
+            # Extreme buckets push harder to overcome FFHQ's adult bias
+            extreme = age in ("1-11 years old", "50+ years old")
             if self._age_mode == 'regression':
                 lo, hi = AGE_RANGES[age]
                 target = float(np.random.uniform(lo, hi))
-                z = self._set_age(z, target)
+                z = self._set_age(z, target, max_shift=7.0 if extreme else 4.0)
             else:
                 # SVM fallback: safe direct offset, no regression math
                 scalar = self._svm_offsets.get(age, 0.0)
-                # Neutralize the face's starting position along the boundary,
-                # then apply the target scalar — keeps the edit deterministic.
                 d = self.age_dir.reshape(1, -1)
                 proj = np.sum(z * d, axis=1, keepdims=True)
                 z = z - proj * d              # remove existing age component
@@ -308,18 +308,31 @@ class GeneratorThread(QThread):
         self.session    = session
         self.graph      = graph
 
-    def _generate_one(self, latent_modifier, fmt, max_tries=5):
+    def _generate_one(self, latent_modifier, fmt):
         """
         Closed-loop generation: keep retrying until the generated image's
-        estimated age falls within the requested range (with a small tolerance),
-        or until max_tries is exhausted.
+        estimated age falls within the requested range (with per-bucket
+        tolerance), or until max_tries is exhausted.
         Returns (img_data, latents).
         """
         lo, hi = AGE_RANGES.get(self.age, (None, None))
         use_validation = (lo is not None and
                          _AgeEstimator.get()._available)
 
-        tol = 3  # years of tolerance at range edges
+        # FFHQ skews 20-40 y/o; extreme buckets need more attempts + wider window
+        extreme = self.age in ("1-11 years old", "50+ years old")
+        max_tries = 10 if extreme else 5
+
+        # Per-bucket acceptance tolerance (lo - tol_lo, hi + tol_hi)
+        TOL = {
+            "1-11 years old":  (2,  12),  # accept up to ~23  (model hard floor ~18)
+            "12-18 years old": (3,   5),
+            "19-25 years old": (3,   3),
+            "26-35 years old": (3,   3),
+            "35-50 years old": (3,   3),
+            "50+ years old":   (10,  5),  # accept from ~41   (model hard ceiling ~50)
+        }
+        tol_lo, tol_hi = TOL.get(self.age, (3, 3))
 
         for attempt in range(max_tries):
             rnd     = np.random.RandomState(None)
@@ -327,10 +340,8 @@ class GeneratorThread(QThread):
             latents = latent_modifier.apply_filters(
                 latents, self.age, self.gender)
 
-            # Apply extra truncation for extreme age buckets to improve realism
-            trunc = 0.7
-            if self.age in ("1-11 years old", "50+ years old"):
-                trunc = 0.6
+            # Extreme buckets use lower truncation for more variety
+            trunc = 0.5 if extreme else 0.7
 
             images = self.Gs.run(latents, None,
                                  truncation_psi=trunc,
@@ -343,10 +354,9 @@ class GeneratorThread(QThread):
 
             est_age = _AgeEstimator.get().estimate(img_data)
             if est_age is None:
-                # no face detected — retry
-                continue
+                continue  # no face detected — retry
 
-            if (lo - tol) <= est_age <= (hi + tol):
+            if (lo - tol_lo) <= est_age <= (hi + tol_hi):
                 break  # within tolerance — accept
 
             print(f"[GeneratorThread] age={self.age} target=[{lo},{hi}] "
