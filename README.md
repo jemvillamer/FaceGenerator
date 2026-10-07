@@ -106,7 +106,10 @@ For significantly better age accuracy, run the one-time calibration script:
 python scripts\fit_age_direction.py --samples 2000
 ```
 
-This takes **~20-30 minutes on CPU**. When it finishes it writes `cache/age_regression.npz`.
+This takes **~20-30 minutes on CPU**. When it finishes it writes
+`cache/age_wplus_regression.npz`. The calibration is fitted in StyleGAN's W
+space and applied across the coarse and middle W+ layers, which is more
+appropriate than a straight-line Z-space edit.
 The next time you start the app you will see:
 
 ```
@@ -120,7 +123,25 @@ The next time you start the app you will see:
 | `--samples` | `2000` | Number of faces to sample. More = more accurate, but slower |
 | `--seed` | `0` | RNG seed for reproducibility |
 | `--alpha` | `0.001` | Ridge regularisation strength |
-| `--out` | `cache/age_regression.npz` | Output file path |
+| `--out` | `cache/age_wplus_regression.npz` | Output file path |
+
+### Check whether the regression is usable
+
+Before investing in a larger refit, evaluate the saved regression on 100 new
+latents (not the samples used for fitting):
+
+```powershell
+python scripts\fit_age_direction.py --evaluate --samples 100
+```
+
+The script reports Pearson correlation between regression predictions and
+InsightFace estimates. Below `0.6` indicates that the fitted age direction is
+too weak to be a dependable age controller; otherwise, compare against a
+larger detector input before blaming the estimator:
+
+```powershell
+python scripts\fit_age_direction.py --evaluate --samples 100 --thumb 320
+```
 
 ---
 
@@ -145,7 +166,7 @@ FaceGenerator/
 |   |-- karras2019stylegan-ffhq-1024x1024.pkl  # Pretrained model (auto-downloaded)
 |   |-- stylegan_ffhq_age_boundary.npy          # SVM boundary (auto-downloaded)
 |   |-- stylegan_ffhq_gender_boundary.npy       # SVM boundary (auto-downloaded)
-|   `-- age_regression.npz                      # Created by fit_age_direction.py
+|   `-- age_wplus_regression.npz                # Created by fit_age_direction.py
 |
 `-- output/                   # Default output folder for generated images
 ```
@@ -167,7 +188,7 @@ FaceGenerator/
 | 50+ years old | Senior |
 
 > Age filtering works in two modes:
-> - **Regression mode** (after running `fit_age_direction.py`): shifts the latent by calibrated real-year units.
+> - **W/W+ regression mode** (after running `fit_age_direction.py`): shifts the mapped W+ latent using calibrated real-year units.
 > - **SVM fallback** (default): uses a hand-tuned boundary offset. Results are good but less precise.
 
 ### Gender

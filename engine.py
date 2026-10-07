@@ -95,6 +95,43 @@ AGE_RANGES = {
 # Layers used for age editing in W+ space (coarse+mid for 1024px StyleGAN v1)
 # StyleGAN v1 @ 1024px has 18 style layers (0..17). We edit 0-11 (coarse+mid).
 AGE_EDIT_LAYERS = list(range(12))   # indices 0-11
+WPLUS_TRUNCATION_CUTOFF = 8          # StyleGAN v1 G_style default
+
+# Closed-loop tuning -------------------------------------------------------
+EXTREME_BUCKETS = ("1-11 years old", "50+ years old")
+
+# Truncation per bucket. Truncation pulls W toward the average face (an adult
+# around 30), which also shrinks the age edit. Extremes keep the low value
+# that already works for them; middle buckets get a higher value so more of
+# the edit survives.
+TRUNC_EXTREME = 0.5
+TRUNC_MIDDLE  = 0.8
+TRUNC_ANY     = 0.7
+
+# Acceptance window = (lo - tol_lo, hi + tol_hi) on the *estimated* age.
+# Middle buckets are kept tight and no longer overlap their neighbours.
+# Extremes keep their original wide windows (the model can't reach the very
+# edges of FFHQ's age distribution).
+TOL = {
+    "1-11 years old":  (2, 12),
+    "12-18 years old": (1,  2),
+    "19-25 years old": (2,  2),
+    "26-35 years old": (2,  2),
+    "35-50 years old": (2,  2),
+    "50+ years old":   (10, 5),
+}
+
+# Per-image refinement limits.  They deliberately bound the feedback loop: a
+# noisy age estimate should not be able to move a face far off-distribution.
+REFINE_STEP_MAX = 1.0
+REFINE_TOTAL_MAX = 4.0
+
+# SVM-fallback only: the old per-bucket scalars, treated as (mid-age, scalar)
+# points. They are close to linear (~0.105 scalar units per year), so we
+# interpolate to get a scalar for any target age and assume ~9.5 years/unit.
+_SVM_POINTS_AGE    = [6.0, 15.0, 22.0, 30.5, 43.0, 63.0]
+_SVM_POINTS_SCALAR = [-2.5, -1.2, -0.3, 0.4, 1.5, 3.5]
+_SVM_YEARS_PER_UNIT = 9.5
 
 
 class LatentDirections:
@@ -102,10 +139,17 @@ class LatentDirections:
     Handles age and gender edits in Z space.
 
     Age direction priority:
-      1. cache/age_regression.npz  — calibrated ridge-regression direction
-         (run scripts/fit_age_direction.py once to produce this).
-      2. Fallback: InterFaceGAN SVM boundary (less accurate, still useful
+      1. cache/age_wplus_regression.npz — calibrated W/W+ direction.
+      2. cache/age_regression.npz — legacy calibrated Z direction.
+      3. Fallback: InterFaceGAN SVM boundary (less accurate, still useful
          as a starting point until the regression file is ready).
+
+    Key invariants (these are what keep the middle age ranges accurate):
+      * age_coef / age_bias are the ORIGINAL fitted regression. They are never
+        modified, so predicted age matches what the regression was fitted on.
+      * age_dir is the unit direction we move along (orthogonal to gender).
+      * age_slope = age_coef . age_dir  is "predicted years per latent unit".
+        Converting a years-difference into a latent shift MUST divide by it.
     """
 
     # ── construction ───────────────────────────────────────────────────────
@@ -113,50 +157,58 @@ class LatentDirections:
         self.gender_boundary = self._load_or_download('stylegan_ffhq_gender_boundary.npy')
         self.gender_boundary /= np.linalg.norm(self.gender_boundary)
 
+        wplus_path = os.path.join(config.cache_dir, 'age_wplus_regression.npz')
         reg_path = os.path.join(config.cache_dir, 'age_regression.npz')
-        if os.path.exists(reg_path):
-            data = np.load(reg_path)
-            self.age_coef = data['age_coef'].astype('float64')
+        self._wplus_data = None
+        if os.path.exists(wplus_path):
+            data = np.load(wplus_path)
+            self.age_coef = data['age_coef'].astype('float64').ravel()
             self.age_bias = float(data['age_bias'])
-            self.age_dir  = data['age_dir'].astype('float64')
+            self.age_dir = data['age_dir'].astype('float64').ravel()
+            self._wplus_data = True
+            self._age_mode = 'wplus_regression'
+            print("[LatentDirections] Using calibrated W/W+ age direction.")
+        elif os.path.exists(reg_path):
+            data = np.load(reg_path)
+            self.age_coef = data['age_coef'].astype('float64').ravel()
+            self.age_bias = float(data['age_bias'])
+            self.age_dir  = data['age_dir'].astype('float64').ravel()
             self._age_mode = 'regression'
             print("[LatentDirections] Using calibrated ridge-regression age direction.")
         else:
-            # Fallback: InterFaceGAN SVM boundary.
-            # We stay in the simple offset world here — the regression path
-            # (_set_age) is only used when age_regression.npz exists.
             raw = self._load_or_download('stylegan_ffhq_age_boundary.npy')
             raw = raw.astype('float64').ravel()
             raw /= np.linalg.norm(raw)
-            self.age_coef = None   # signals: use _apply_age_svm() instead
+            self.age_coef = None   # signals: use SVM path instead
             self.age_bias = None
             self.age_dir  = raw    # unit-norm boundary vector
             self._age_mode = 'svm_fallback'
-            # Safe per-range scalars (empirically tuned, max 3.0 to stay in-distribution)
-            self._svm_offsets = {
-                "1-11 years old":  -2.5,
-                "12-18 years old": -1.2,
-                "19-25 years old": -0.3,
-                "26-35 years old":  0.4,
-                "35-50 years old":  1.5,
-                "50+ years old":    3.5,   # raised: model skews young
-            }
             print("[LatentDirections] age_regression.npz not found — using "
                   "InterFaceGAN SVM boundary as fallback. "
                   "Run scripts/fit_age_direction.py for better accuracy.")
 
-        # Orthogonalize age direction against gender to reduce entanglement
+        # Z and W live in different coordinate systems. Orthogonalizing a W
+        # direction against the Z-space gender boundary is invalid, so do it
+        # only for the legacy Z and SVM paths.
         g = self.gender_boundary.ravel()
         d = self.age_dir.ravel()
-        d = d - (d @ g) / (g @ g) * g
+        if self._age_mode != 'wplus_regression':
+            d = d - (d @ g) / (g @ g) * g
         if np.linalg.norm(d) > 1e-8:
             d /= np.linalg.norm(d)
         self.age_dir = d
-        # age_coef must also be updated so predicted age is consistent
-        if self._age_mode == 'regression':
-            c = self.age_coef.ravel()
-            c = c - (c @ g) / (g @ g) * g
-            self.age_coef = c
+
+        # Years of predicted age per unit of movement along age_dir.
+        if self._age_mode in ('regression', 'wplus_regression'):
+            slope = float(self.age_coef @ self.age_dir)
+            if abs(slope) < 1e-3:
+                print(f"[LatentDirections] WARNING: age slope is ~0 ({slope:.5f}); "
+                      "falling back to 1.0. Check age_regression.npz.")
+                slope = 1.0
+            self.age_slope = slope
+            print(f"[LatentDirections] age slope = {slope:.2f} years per latent unit")
+        else:
+            self.age_slope = _SVM_YEARS_PER_UNIT
 
     # ── helpers ─────────────────────────────────────────────────────────────
     def _load_or_download(self, filename):
@@ -171,44 +223,42 @@ class LatentDirections:
         return np.load(filepath)
 
     def _predict_age(self, z):
-        """Predict age for a single z vector (shape (512,))."""
+        """Predict age from a single fitted-space vector (shape (512,))."""
         return float(z.ravel() @ self.age_coef + self.age_bias)
 
     def _set_age(self, z, target_age, max_shift=4.0):
         """
-        Move z so that its predicted age equals target_age.
-        Only called in regression mode. Clamps the shift to ±max_shift
-        so the latent never leaves the model's training distribution.
-        Extreme age buckets pass a higher max_shift (up to 7.0).
+        Move z so that its predicted age equals target_age (regression mode).
+
+        delta_years / slope converts years into latent units (the old code
+        used years directly as latent units, which is only right when the
+        slope happens to be exactly 1). The shift is clamped so the latent
+        stays in-distribution.
         """
         z = z.astype('float64')
-        current = float(z.ravel() @ self.age_coef + self.age_bias)
-        delta   = float(np.clip(target_age - current, -max_shift, max_shift))
+        current = self._predict_age(z)
+        delta = (target_age - current) / self.age_slope
+        delta = float(np.clip(delta, -max_shift, max_shift))
         return z + delta * self.age_dir.reshape(1, -1)
 
-    def apply_filters(self, latents, age, gender):
+    def _svm_scalar(self, target_age):
+        scalar = float(np.interp(target_age, _SVM_POINTS_AGE, _SVM_POINTS_SCALAR))
+        return float(np.clip(scalar, -4.0, 4.5))
+
+    def apply_filters(self, latents, age, gender, target_age=None):
         """
-        Apply age and gender edits to Z latents.
+        Apply gender then age edits to Z latents.
         latents: (1, 512) float32.  Returns: (1, 512) float32.
+
+        target_age : aimed age in years (drawn from the bucket if None).
+        Gender is applied FIRST. The gender edit changes the predicted age
+        (the regression has a gender component), so the age step has to see
+        the post-gender latent to land on the right age. age_dir is orthogonal
+        to the gender direction, so the age step does not undo the gender edit.
         """
         z = latents.astype('float64')
 
-        # ── Age filter ───────────────────────────────────────────────────
-        if age != "Any" and age in AGE_RANGES:
-            # Extreme buckets push harder to overcome FFHQ's adult bias
-            extreme = age in ("1-11 years old", "50+ years old")
-            if self._age_mode == 'regression':
-                lo, hi = AGE_RANGES[age]
-                target = float(np.random.uniform(lo, hi))
-                z = self._set_age(z, target, max_shift=7.0 if extreme else 4.0)
-            else:
-                # SVM fallback: safe direct offset, no regression math
-                scalar = self._svm_offsets.get(age, 0.0)
-                d = self.age_dir.reshape(1, -1)
-                proj = np.sum(z * d, axis=1, keepdims=True)
-                z = z - proj * d              # remove existing age component
-                z = z + d * scalar            # place at target scalar
-
+        # ── Gender filter ────────────────────────────────────────────────
         if gender != "Any":
             # Neutralize inherent gender variance, then set absolute target
             g = self.gender_boundary.reshape(1, -1)
@@ -219,7 +269,42 @@ class LatentDirections:
             elif gender == "Female":
                 z = z - g * 2.0
 
+        # ── Age filter ───────────────────────────────────────────────────
+        if (age != "Any" and age in AGE_RANGES and
+                self._age_mode != 'wplus_regression'):
+            extreme = age in EXTREME_BUCKETS
+            lo, hi = AGE_RANGES[age]
+            if target_age is None:
+                target_age = float(np.random.uniform(lo, hi))
+            if self._age_mode == 'regression':
+                z = self._set_age(z, target_age,
+                                  max_shift=7.0 if extreme else 4.0)
+            else:
+                d = self.age_dir.reshape(1, -1)
+                proj = np.sum(z * d, axis=1, keepdims=True)
+                z = z - proj * d                                   # remove existing age component
+                z = z + d * self._svm_scalar(target_age)   # place at target scalar
+
         return z.astype('float32')
+
+    def prepare_wplus(self, Gs, z, truncation_psi):
+        """Map Z to the truncated W+ tensor used by StyleGAN synthesis."""
+        dlatents = Gs.components.mapping.run(z, None).astype('float64')
+        cutoff = Gs.static_kwargs.get('truncation_cutoff', WPLUS_TRUNCATION_CUTOFF)
+        if cutoff is not None and cutoff > 0:
+            average = Gs.get_var('dlatent_avg').astype('float64')
+            dlatents[:, :cutoff, :] = (average + truncation_psi *
+                                        (dlatents[:, :cutoff, :] - average))
+        return dlatents
+
+    def set_wplus_age(self, dlatents, target_age, max_shift=4.0):
+        """Set the fitted W age and apply that direction to coarse/mid W+."""
+        w = dlatents[:, 0, :]
+        delta = (target_age - self._predict_age(w)) / self.age_slope
+        delta = float(np.clip(delta, -max_shift, max_shift))
+        result = dlatents.copy()
+        result[:, AGE_EDIT_LAYERS, :] += delta * self.age_dir.reshape(1, 1, -1)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -307,62 +392,116 @@ class GeneratorThread(QThread):
         self.Gs         = Gs
         self.session    = session
         self.graph      = graph
-
     def _generate_one(self, latent_modifier, fmt):
         """
-        Closed-loop generation: keep retrying until the generated image's
-        estimated age falls within the requested range (with per-bucket
-        tolerance), or until max_tries is exhausted.
-        Returns (img_data, latents).
+        Closed-loop generation. For each attempt:
+          1. draw one target age and build one latent,
+          2. generate and estimate the age,
+          3. refine that same latent along the age direction,
+          4. accept if inside the tolerance window.
+        If nothing is accepted, return the attempt that came CLOSEST to the
+        range (not simply the last one). Returns the uint8 image.
         """
         lo, hi = AGE_RANGES.get(self.age, (None, None))
-        use_validation = (lo is not None and
-                         _AgeEstimator.get()._available)
+        estimator = _AgeEstimator.get() if lo is not None else None
+        use_validation = estimator is not None and estimator._available
 
-        # FFHQ skews 20-40 y/o; extreme buckets need more attempts + wider window
-        extreme = self.age in ("1-11 years old", "50+ years old")
-        max_tries = 10 if extreme else 5
+        extreme = self.age in EXTREME_BUCKETS
+        max_tries = 10 if extreme else 6
+        tol_lo, tol_hi = TOL.get(self.age, (2, 2))
 
-        # Per-bucket acceptance tolerance (lo - tol_lo, hi + tol_hi)
-        TOL = {
-            "1-11 years old":  (2,  12),  # accept up to ~23  (model hard floor ~18)
-            "12-18 years old": (3,   5),
-            "19-25 years old": (3,   3),
-            "26-35 years old": (3,   3),
-            "35-50 years old": (3,   3),
-            "50+ years old":   (10,  5),  # accept from ~41   (model hard ceiling ~50)
-        }
-        tol_lo, tol_hi = TOL.get(self.age, (3, 3))
+        if lo is None:
+            trunc = TRUNC_ANY
+        else:
+            trunc = TRUNC_EXTREME if extreme else TRUNC_MIDDLE
+
+        best = None       # (miss_in_years, image) among attempts with an estimate
+        last_img = None   # fallback when no face was ever detected
+
+        # A retry is a measurement-and-correction cycle for one face, not a
+        # new random draw.  This lets its observed response set the direction
+        # and scale of the next correction without leaking noise to later
+        # images.
+        rnd = np.random.RandomState(None)
+        latents = rnd.randn(1, self.Gs.input_shape[1]).astype('float32')
+        target = float(np.random.uniform(lo, hi)) if lo is not None else None
+        latents = latent_modifier.apply_filters(
+            latents, self.age, self.gender, target_age=target)
+        use_wplus = latent_modifier._age_mode == 'wplus_regression'
+        if use_wplus:
+            base_latents = latent_modifier.prepare_wplus(Gs=self.Gs, z=latents,
+                                                         truncation_psi=trunc)
+            base_latents = latent_modifier.set_wplus_age(
+                base_latents, target,
+                max_shift=7.0 if extreme else 4.0)
+        else:
+            base_latents = latents.astype('float64')
+        refinement = 0.0
+        previous = None  # (refinement, estimated_age)
 
         for attempt in range(max_tries):
-            rnd     = np.random.RandomState(None)
-            latents = rnd.randn(1, self.Gs.input_shape[1]).astype('float32')
-            latents = latent_modifier.apply_filters(
-                latents, self.age, self.gender)
-
-            # Extreme buckets use lower truncation for more variety
-            trunc = 0.5 if extreme else 0.7
-
-            images = self.Gs.run(latents, None,
-                                 truncation_psi=trunc,
-                                 randomize_noise=True,
-                                 output_transform=fmt)
+            if use_wplus:
+                candidate = base_latents.copy()
+                candidate[:, AGE_EDIT_LAYERS, :] += (
+                    refinement * latent_modifier.age_dir.reshape(1, 1, -1))
+                images = self.Gs.components.synthesis.run(
+                    candidate.astype('float32'), output_transform=fmt)
+            else:
+                candidate = (base_latents + refinement *
+                             latent_modifier.age_dir.reshape(1, -1)).astype('float32')
+                images = self.Gs.run(candidate, None,
+                                     truncation_psi=trunc,
+                                     # Keep stochastic noise fixed too: otherwise a retry
+                                     # changes two inputs and corrupts the local slope.
+                                     randomize_noise=False,
+                                     output_transform=fmt)
             img_data = images[0]
+            last_img = img_data
 
             if not use_validation:
-                break  # no estimator — just return first result
+                return img_data  # no estimator — just return first result
 
-            est_age = _AgeEstimator.get().estimate(img_data)
+            est_age = estimator.estimate(img_data)
             if est_age is None:
+                print(f"[GeneratorThread] age={self.age} target={target:.1f} "
+                      f"attempt {attempt+1}/{max_tries}: no face detected")
                 continue  # no face detected — retry
 
+            miss = max(lo - est_age, est_age - hi, 0.0)
+            if best is None or miss < best[0]:
+                best = (miss, img_data)
+
             if (lo - tol_lo) <= est_age <= (hi + tol_hi):
-                break  # within tolerance — accept
+                print(f"[GeneratorThread] age={self.age} target={target:.1f} "
+                      f"got={est_age:.1f} accepted attempt {attempt+1}/{max_tries}")
+                return img_data  # within tolerance — accept
 
-            print(f"[GeneratorThread] age={self.age} target=[{lo},{hi}] "
-                  f"got={est_age:.1f}  retry {attempt+1}/{max_tries}")
+            # First correction uses the fitted slope only as a small probe.
+            # Thereafter use the face's own two measurements (a secant slope).
+            # If the local response is too small or reverses, retain the safe
+            # fitted-slope probe instead of amplifying estimator noise.
+            if previous is None:
+                slope = latent_modifier.age_slope
+            else:
+                delta_refinement = refinement - previous[0]
+                local_slope = ((est_age - previous[1]) / delta_refinement
+                               if abs(delta_refinement) > 1e-6 else 0.0)
+                slope = (local_slope if local_slope * latent_modifier.age_slope > 0.5
+                         else latent_modifier.age_slope)
+            step = float(np.clip((target - est_age) / slope,
+                                 -REFINE_STEP_MAX, REFINE_STEP_MAX))
+            previous = (refinement, est_age)
+            refinement = float(np.clip(refinement + step,
+                                       -REFINE_TOTAL_MAX, REFINE_TOTAL_MAX))
+            print(f"[GeneratorThread] age={self.age} target={target:.1f} "
+                  f"got={est_age:.1f} refine={refinement:+.2f} "
+                  f"retry {attempt+1}/{max_tries}")
 
-        return img_data, latents
+        if best is not None:
+            print(f"[GeneratorThread] age={self.age} exhausted {max_tries} attempts; "
+                  f"returning closest miss={best[0]:.1f} years")
+            return best[1]
+        return last_img
 
     def run(self):
         try:
@@ -375,7 +514,7 @@ class GeneratorThread(QThread):
                     for i in range(self.num_images):
                         if self.isInterruptionRequested():
                             break
-                        img_data, _ = self._generate_one(latent_modifier, fmt)
+                        img_data = self._generate_one(latent_modifier, fmt)
                         png_filename = os.path.join(
                             self.output_dir, f'generated_{i:04d}.png')
                         PIL.Image.fromarray(img_data, 'RGB').save(png_filename)

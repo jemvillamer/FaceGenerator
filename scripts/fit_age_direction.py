@@ -1,13 +1,13 @@
 """
 fit_age_direction.py
 ====================
-One-time offline script that fits a ridge-regression age direction in Z space
+One-time offline script that fits a ridge-regression age direction in W/W+ space
 using InsightFace (buffalo_l) as the age estimator.
 
-It produces `cache/age_regression.npz` containing:
+It produces `cache/age_wplus_regression.npz` containing:
   age_coef  (512,)   — regression weights
   age_bias  float    — regression intercept
-  age_dir   (512,)   — the move-1-year direction (= coef / (coef @ coef))
+  age_dir   (512,)   — unit W direction applied to coarse/mid W+ layers
   age_mean  float    — mean predicted age over the sample (sanity check)
 
 Usage (from the FaceGenerator root, in the venv37):
@@ -30,6 +30,8 @@ import numpy as np
 # ── make sure the project root is on sys.path ──────────────────────────────
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+
+WPLUS_TRUNCATION_CUTOFF = 8  # StyleGAN v1 G_style default
 
 import config                                # noqa: E402 – project config
 
@@ -106,8 +108,10 @@ def parse_args():
                    help='Thumbnail size passed to InsightFace (must be a multiple of 32)')
     p.add_argument('--alpha',   type=float, default=1e-3,
                    help='Ridge regularisation strength')
-    p.add_argument('--out',     default=os.path.join('cache', 'age_regression.npz'),
+    p.add_argument('--out',     default=os.path.join('cache', 'age_wplus_regression.npz'),
                    help='Output .npz path')
+    p.add_argument('--evaluate', action='store_true',
+                   help='Evaluate an existing regression on fresh samples; do not refit')
     return p.parse_args()
 
 
@@ -149,6 +153,22 @@ def build_age_estimator(thumb_size):
     return estimate_age
 
 
+def map_to_wplus(Gs, z, truncation_psi):
+    """Reproduce StyleGAN's inference-time Z -> truncated W+ mapping."""
+    dlatents = Gs.components.mapping.run(z, None).astype('float64')
+    cutoff = Gs.static_kwargs.get('truncation_cutoff', WPLUS_TRUNCATION_CUTOFF)
+    if cutoff is not None and cutoff > 0:
+        average = Gs.get_var('dlatent_avg').astype('float64')
+        dlatents[:, :cutoff, :] = (average + truncation_psi *
+                                    (dlatents[:, :cutoff, :] - average))
+    return dlatents
+
+
+def generate_from_wplus(Gs, dlatents, output_transform):
+    return Gs.components.synthesis.run(dlatents.astype('float32'),
+                                        output_transform=output_transform)
+
+
 def main():
     args = parse_args()
     rng  = np.random.RandomState(args.seed)
@@ -166,19 +186,63 @@ def main():
     print("[fit_age_direction] Building InsightFace age estimator …")
     estimate_age = build_age_estimator(args.thumb)
 
+    if args.evaluate:
+        if not os.path.exists(args.out):
+            raise SystemExit(f"Regression file not found: {args.out}")
+        data = np.load(args.out)
+        coef = data['age_coef'].astype('float64').ravel()
+        bias = float(data['age_bias'])
+        is_wplus = ('latent_space' in data and
+                    str(data['latent_space'].item()) == 'wplus')
+        predicted, measured = [], []
+        print(f"[fit_age_direction] Evaluating {args.samples} fresh latents …")
+        import PIL.Image as PILImage
+        for _ in range(args.samples):
+            z = rng.randn(1, Gs.input_shape[1]).astype('float32')
+            if is_wplus:
+                dlatents = map_to_wplus(Gs, z, truncation_psi=0.7)
+                img = generate_from_wplus(Gs, dlatents, fmt)[0]
+                fitted_vector = dlatents[0, 0]
+            else:
+                img = Gs.run(z, None, truncation_psi=0.7,
+                             randomize_noise=False, output_transform=fmt)[0]
+                fitted_vector = z[0]
+            img_small = np.array(PILImage.fromarray(img, 'RGB').resize(
+                (args.thumb, args.thumb), PILImage.BILINEAR))
+            age = estimate_age(img_small)
+            if age is not None:
+                predicted.append(float(fitted_vector @ coef + bias))
+                measured.append(age)
+        if len(measured) < 3:
+            raise SystemExit("Too few detected faces to calculate correlation.")
+        predicted = np.asarray(predicted)
+        measured = np.asarray(measured)
+        corr = float(np.corrcoef(predicted, measured)[0, 1])
+        rmse = float(np.sqrt(np.mean((predicted - measured) ** 2)))
+        print(f"[fit_age_direction] Hold-out samples: {len(measured)} / {args.samples}")
+        print(f"[fit_age_direction] Pearson correlation: {corr:.3f}")
+        print(f"[fit_age_direction] RMSE: {rmse:.2f} years")
+        if corr < 0.6:
+            print("[fit_age_direction] Result: weak fitted-space regression; "
+                  "the W/W+ direction is not dependable.")
+        else:
+            print("[fit_age_direction] Result: regression is reasonably correlated; "
+                  "try --thumb 320 to check estimator sensitivity.")
+        return
+
     # We generate at a lower resolution to stay fast on CPU.
     # StyleGAN v1 / FFHQ has a fixed output size, so we just downscale the image.
     import PIL.Image as PILImage
 
-    z_list   = []
+    w_list   = []
     age_list = []
     skipped  = 0
 
     print(f"[fit_age_direction] Sampling {args.samples} latents …")
     for i in range(args.samples):
         z = rng.randn(1, Gs.input_shape[1]).astype('float32')
-        img = Gs.run(z, None, truncation_psi=0.7,
-                     randomize_noise=False, output_transform=fmt)[0]
+        dlatents = map_to_wplus(Gs, z, truncation_psi=0.7)
+        img = generate_from_wplus(Gs, dlatents, fmt)[0]
 
         # Downscale to thumb_size x thumb_size for faster InsightFace inference
         pil = PILImage.fromarray(img, 'RGB').resize(
@@ -192,7 +256,9 @@ def main():
                 print(f"  [{i}/{args.samples}] no face detected, skipping")
             continue
 
-        z_list.append(z[0])
+        # The mapper broadcasts one W vector over W+ at this stage. Fit that
+        # native W coordinate, then use its learned direction in W+ layers.
+        w_list.append(dlatents[0, 0])
         age_list.append(age)
 
         if i % 100 == 0:
@@ -200,24 +266,25 @@ def main():
             print(f"  [{i}/{args.samples}] collected {n}, "
                   f"mean_age={np.mean(age_list):.1f}, skipped={skipped}")
 
-    Z   = np.stack(z_list)           # (N, 512)
+    W   = np.stack(w_list)           # (N, 512)
     ages = np.array(age_list)        # (N,)
-    print(f"\n[fit_age_direction] Collected {len(Z)} samples "
+    print(f"\n[fit_age_direction] Collected {len(W)} samples "
           f"(skipped {skipped} / {args.samples}). "
           f"Age range: {ages.min():.0f}–{ages.max():.0f}, "
           f"mean={ages.mean():.1f}")
 
-    # ── Ridge regression: age ≈ Z @ coef + bias ────────────────────────────
+    # ── Ridge regression: age ≈ W @ coef + bias ────────────────────────────
     from sklearn.linear_model import Ridge
     reg = Ridge(alpha=args.alpha, fit_intercept=True)
-    reg.fit(Z, ages)
+    reg.fit(W, ages)
     coef = reg.coef_.astype('float64')    # (512,)
     bias = float(reg.intercept_)
 
-    # age_dir: moving along this by 1.0 changes predicted age by 1 year
-    age_dir = coef / (coef @ coef)
+    # The engine normalizes this direction and calculates its resulting
+    # years-per-W-unit slope. It is applied to AGE_EDIT_LAYERS in W+.
+    age_dir = coef / np.linalg.norm(coef)
 
-    pred = Z @ coef + bias
+    pred = W @ coef + bias
     rmse = float(np.sqrt(np.mean((pred - ages)**2)))
     print(f"[fit_age_direction] Ridge fit RMSE: {rmse:.2f} years")
     print(f"[fit_age_direction] bias (mean predicted age): {bias:.1f}")
@@ -228,6 +295,7 @@ def main():
              age_coef=coef,
              age_bias=np.array(bias),
              age_dir=age_dir,
+             latent_space=np.array('wplus'),
              age_mean=np.array(ages.mean()))
     print(f"[fit_age_direction] Saved → {args.out}")
     print("You can now run the main app — it will pick up the new regression direction automatically.")
