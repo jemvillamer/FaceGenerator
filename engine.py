@@ -1,4 +1,5 @@
 import os
+import re
 import pickle
 import numpy as np
 import PIL.Image
@@ -292,6 +293,20 @@ def load_model():
     return Gs, tf.get_default_session(), tf.get_default_graph()
 
 
+_OUTPUT_NAME_RE = re.compile(r'^generated_(\d+)\.png$', re.IGNORECASE)
+
+
+def next_output_index(output_dir):
+    """Return the number after the highest existing generated_NNNN.png in
+    output_dir (0 if there are none), so a new run never overwrites old images."""
+    try:
+        names = os.listdir(output_dir)
+    except FileNotFoundError:
+        return 0
+    numbers = [int(m.group(1)) for m in map(_OUTPUT_NAME_RE.match, names) if m]
+    return max(numbers) + 1 if numbers else 0
+
+
 class GeneratorThread(QThread):
     progress = pyqtSignal(int)
     finished = pyqtSignal(str)
@@ -369,6 +384,7 @@ class GeneratorThread(QThread):
             fmt = dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True)
             latent_modifier = LatentDirections()
             os.makedirs(self.output_dir, exist_ok=True)
+            file_index = next_output_index(self.output_dir)
 
             with self.graph.as_default():
                 with self.session.as_default():
@@ -377,7 +393,12 @@ class GeneratorThread(QThread):
                             break
                         img_data, _ = self._generate_one(latent_modifier, fmt)
                         png_filename = os.path.join(
-                            self.output_dir, f'generated_{i:04d}.png')
+                            self.output_dir, f'generated_{file_index:04d}.png')
+                        while os.path.exists(png_filename):  # file appeared mid-run
+                            file_index += 1
+                            png_filename = os.path.join(
+                                self.output_dir, f'generated_{file_index:04d}.png')
+                        file_index += 1
                         PIL.Image.fromarray(img_data, 'RGB').save(png_filename)
                         self.progress.emit(i + 1)
                         self.preview.emit(img_data, png_filename)

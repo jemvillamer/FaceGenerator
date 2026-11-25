@@ -92,6 +92,7 @@ This only happens once. Subsequent launches are instant.
 5. Click **Generate Images**
 
 Generated images are saved as `generated_0000.png`, `generated_0001.png`, ... in the output directory.
+Each run continues numbering after the highest existing `generated_NNNN.png`, so earlier images are never overwritten.
 A live preview is shown in the right panel.
 
 ---
