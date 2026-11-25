@@ -146,18 +146,25 @@ class LatentDirections:
                   "InterFaceGAN SVM boundary as fallback. "
                   "Run scripts/fit_age_direction.py for better accuracy.")
 
-        # Orthogonalize age direction against gender to reduce entanglement
+        # Orthogonalize age against gender to reduce entanglement
         g = self.gender_boundary.ravel()
-        d = self.age_dir.ravel()
-        d = d - (d @ g) / (g @ g) * g
-        if np.linalg.norm(d) > 1e-8:
-            d /= np.linalg.norm(d)
-        self.age_dir = d
-        # age_coef must also be updated so predicted age is consistent
         if self._age_mode == 'regression':
+            # Remove the gender component from the regression weights, then
+            # rebuild the direction as c / (c·c): moving 1.0 along it changes
+            # the predicted age by exactly 1 year. (Normalising it to unit
+            # length instead makes each latent unit worth ||c|| years, ~10 with
+            # a typical calibration, so every edit overshoots its target.)
             c = self.age_coef.ravel()
             c = c - (c @ g) / (g @ g) * g
             self.age_coef = c
+            self.age_dir = c / (c @ c)
+        else:
+            # SVM fallback: offsets are in latent units, so keep a unit vector
+            d = self.age_dir.ravel()
+            d = d - (d @ g) / (g @ g) * g
+            if np.linalg.norm(d) > 1e-8:
+                d /= np.linalg.norm(d)
+            self.age_dir = d
 
     # ── helpers ─────────────────────────────────────────────────────────────
     def _load_or_download(self, filename):
@@ -178,13 +185,16 @@ class LatentDirections:
     def _set_age(self, z, target_age, max_shift=4.0):
         """
         Move z so that its predicted age equals target_age.
-        Only called in regression mode. Clamps the shift to ±max_shift
-        so the latent never leaves the model's training distribution.
-        Extreme age buckets pass a higher max_shift (up to 7.0).
+        Only called in regression mode. age_dir is scaled so that one unit
+        along it is one year; the latent step is clamped to max_shift latent
+        units (Euclidean length) so the latent never leaves the model's
+        training distribution. Extreme age buckets pass a higher max_shift
+        (up to 7.0).
         """
         z = z.astype('float64')
         current = float(z.ravel() @ self.age_coef + self.age_bias)
-        delta   = float(np.clip(target_age - current, -max_shift, max_shift))
+        max_years = max_shift / np.linalg.norm(self.age_dir)  # latent cap -> years
+        delta   = float(np.clip(target_age - current, -max_years, max_years))
         return z + delta * self.age_dir.reshape(1, -1)
 
     def apply_filters(self, latents, age, gender):
