@@ -295,7 +295,7 @@ def load_model():
 class GeneratorThread(QThread):
     progress = pyqtSignal(int)
     finished = pyqtSignal(str)
-    preview  = pyqtSignal(np.ndarray)
+    preview  = pyqtSignal(np.ndarray, str)   # (image, path it was saved to)
     error    = pyqtSignal(str)
 
     def __init__(self, num_images, age, gender, output_dir, Gs, session, graph):
@@ -380,7 +380,7 @@ class GeneratorThread(QThread):
                             self.output_dir, f'generated_{i:04d}.png')
                         PIL.Image.fromarray(img_data, 'RGB').save(png_filename)
                         self.progress.emit(i + 1)
-                        self.preview.emit(img_data)
+                        self.preview.emit(img_data, png_filename)
 
             self.finished.emit(
                 f"Successfully generated {self.num_images} images in:\n{self.output_dir}")

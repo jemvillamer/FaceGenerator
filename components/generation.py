@@ -65,6 +65,7 @@ class GenerationMixin:
         self.progress_bar.setMaximum(num_images)
         self.progress_bar.setValue(0)
         self.gen_btn.setEnabled(False)
+        self.btn_browse.setEnabled(False)  # output folder is fixed for the run
         self.open_folder_btn.setEnabled(False)
         self.preview_canvas.clear_image()
         self._refresh_gallery()
@@ -86,9 +87,10 @@ class GenerationMixin:
         self.thread.error.connect(self.generation_error)
         self.thread.start()
 
-    def on_image_generated(self, img_array):
+    def on_image_generated(self, img_array, path):
+        # `path` is where the worker actually saved the file; don't rebuild it
+        # from the gallery index, which drifts once an image is deleted mid-run.
         idx = len(self._images)
-        path = os.path.join(self._output_dir, f"generated_{idx:04d}.png")
         arr = img_array.copy()
         icon = make_thumb_icon(array_to_pixmap(arr))
         self._images.append({"path": path, "array": arr, "icon": icon})
@@ -113,6 +115,7 @@ class GenerationMixin:
     def generation_finished(self, _msg):
         self._generating = False
         self.gen_btn.setEnabled(True)
+        self.btn_browse.setEnabled(True)
         count = len(self._images)
         self.open_folder_btn.setEnabled(count > 0)
         if count:
@@ -130,6 +133,7 @@ class GenerationMixin:
     def generation_error(self, err):
         self._generating = False
         self.gen_btn.setEnabled(True)
+        self.btn_browse.setEnabled(True)
         self._refresh_gallery()
         self._set_status("error", "Error during generation", "See details in the dialog")
         QMessageBox.critical(self, "Error", f"An error occurred:\n\n{err}")
