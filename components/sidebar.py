@@ -11,7 +11,7 @@ from PyQt5.QtGui import QFont, QRegExpValidator
 
 from latents import AGE_BUCKETS
 from .constants import GENDERS, MAX_IMAGES
-from .icons import svg_pixmap, make_icon
+from .icons import logo_pixmap, make_icon
 from .widgets import ElidedLabel, StepperEdit
 
 
@@ -49,7 +49,7 @@ def build_sidebar(window):
     badge = QLabel()
     badge.setObjectName("app_icon_badge")
     badge.setAlignment(Qt.AlignCenter)
-    badge.setPixmap(svg_pixmap("user", "#ffffff", 20, stroke=2.0))
+    badge.setPixmap(logo_pixmap(36))
     header.addWidget(badge)
     title_col = QVBoxLayout()
     title_col.setSpacing(0)

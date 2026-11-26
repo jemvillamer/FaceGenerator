@@ -70,8 +70,8 @@ QLabel#nav_counter {
 }
 
 QLabel#app_icon_badge {
-    background-color: #2f6fdb;
-    border-radius: 10px;
+    /* The app logo (packaging/logo.png) has its own rounded tile. */
+    background: transparent;
     min-width: 36px;
     max-width: 36px;
     min-height: 36px;

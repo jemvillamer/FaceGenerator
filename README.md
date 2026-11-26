@@ -168,7 +168,8 @@ FaceGenerator/
 |   |-- build.ps1             # Runs the whole build
 |   |-- facegen.spec          # PyInstaller bundle definition
 |   |-- installer.iss         # Inno Setup installer script
-|   `-- make_icon.py          # Draws facegen.ico
+|   |-- logo.png              # App logo (window, taskbar, sidebar header)
+|   `-- make_icon.py          # Makes facegen.ico (.exe/installer icon) from logo.png
 ├── components/
 │   ├── window.py                   # FaceGeneratorApp: __init__ and wiring only
 │   │                               
@@ -280,7 +281,7 @@ winget install JRSoftware.InnoSetup                                     # instal
 
 It takes about 10 minutes and does four things:
 
-1. Draws the app icon (`packaging\make_icon.py`).
+1. Makes the Windows icon from `packaging\logo.png` (`packaging\make_icon.py`).
 2. Bundles the app with PyInstaller (`packaging\facegen.spec`) into `dist\FaceGenerator\`.
 3. Runs the bundled app's self-test (`FaceGenerator.exe --self-test <folder>`). This loads
    the model and generates one face with the age check, so a broken bundle stops the build.

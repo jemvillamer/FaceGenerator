@@ -26,7 +26,7 @@ if os.environ.get('FACEGEN_INCLUDE_MODEL') == '1':
 
 datas = [
     (os.path.join(ROOT, 'style.qss'), '.'),
-    (os.path.join(SPECPATH, 'facegen.ico'), 'packaging'),
+    (os.path.join(SPECPATH, 'logo.png'), 'packaging'),
 ]
 for name in BUNDLED_DATA:
     path = os.path.join(CACHE, name)

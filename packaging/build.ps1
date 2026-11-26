@@ -3,7 +3,7 @@
     Build the desktop app and its Windows installer.
 
 .DESCRIPTION
-    1. Draws the app icon (packaging\facegen.ico).
+    1. Makes the Windows icon (packaging\facegen.ico) from packaging\logo.png.
     2. Bundles the app with PyInstaller into dist\FaceGenerator\.
     3. Runs the bundled app's self-test: loads the model and generates one
        face, so a broken bundle is caught before it ships.
@@ -53,7 +53,7 @@ catch {
 
 Push-Location $root
 try {
-    Write-Host "== Drawing the app icon" -ForegroundColor Cyan
+    Write-Host "== Making the app icon" -ForegroundColor Cyan
     Invoke-Checked "make_icon.py" { & $python packaging\make_icon.py }
 
     Write-Host "== Bundling with PyInstaller (takes a few minutes)" -ForegroundColor Cyan

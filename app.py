@@ -16,7 +16,7 @@ log_file = log_setup.configure()
 from PyQt5.QtGui import QIcon  # noqa: E402
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 
-from components.paths import APP_ICON  # noqa: E402
+from components.paths import APP_LOGO  # noqa: E402
 from components.window import FaceGeneratorApp  # noqa: E402
 
 
@@ -61,8 +61,8 @@ if __name__ == "__main__":
         sys.exit(self_test(sys.argv[2]))
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    if os.path.isfile(APP_ICON):
-        app.setWindowIcon(QIcon(APP_ICON))
+    if os.path.isfile(APP_LOGO):
+        app.setWindowIcon(QIcon(APP_LOGO))
     ex = FaceGeneratorApp()
     log_setup.set_error_reporter(ex.report_unexpected_error)
     ex.show()
