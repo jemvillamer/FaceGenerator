@@ -106,8 +106,9 @@ def parse_args():
                    help='Thumbnail size passed to InsightFace (must be a multiple of 32)')
     p.add_argument('--alpha',   type=float, default=1e-3,
                    help='Ridge regularisation strength')
-    p.add_argument('--out',     default=os.path.join('cache', 'age_regression.npz'),
-                   help='Output .npz path')
+    p.add_argument('--out',     default=os.path.join(config.cache_dir, 'age_regression.npz'),
+                   help='Output .npz path (default: %(default)s, '
+                        'where the app looks for it)')
     return p.parse_args()
 
 
