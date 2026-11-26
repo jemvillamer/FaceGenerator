@@ -1,5 +1,7 @@
 import os
 import re
+from dataclasses import dataclass
+
 import numpy as np
 import PIL.Image
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -12,16 +14,53 @@ from downloads import ChecksumError
 
 
 # ---------------------------------------------------------------------------
-# Age range definitions  (lo, hi) in real years
+# Age buckets: every rule tied to an age choice, in one place
 # ---------------------------------------------------------------------------
-AGE_RANGES = {
-    "1-11 years old":  ( 1, 11),
-    "12-18 years old": (12, 18),
-    "19-25 years old": (19, 25),
-    "26-35 years old": (26, 35),
-    "35-50 years old": (36, 50),
-    "50+ years old":   (51, 75),
-}
+@dataclass(frozen=True)
+class AgeBucket:
+    key: str            # value used in code and passed from the UI
+    label: str          # text shown in the age dropdown
+    lo: int             # target age range in years (inclusive)
+    hi: int
+    svm_offset: float   # SVM-fallback position along the age boundary, in latent
+                        # units (empirically tuned; kept small to stay in distribution)
+    tolerance: tuple    # (years below lo, years above hi) the age check accepts
+    # FFHQ skews 20-40 years old, so the extreme buckets push harder:
+    # more attempts, lower truncation (more variety) and a larger edit cap.
+    extreme: bool = False
+
+    @property
+    def truncation_psi(self):
+        return 0.5 if self.extreme else 0.7
+
+    @property
+    def max_tries(self):
+        return 10 if self.extreme else 5
+
+    @property
+    def max_shift(self):
+        """Largest calibrated age edit, in latent units."""
+        return 7.0 if self.extreme else 4.0
+
+
+AGE_BUCKETS = [
+    # tolerance (2, 12): accept up to ~23 (model hard floor ~18)
+    AgeBucket("1-11 years old",  "1–11 years old",   1, 11, -2.5, (2, 12), extreme=True),
+    AgeBucket("12-18 years old", "12–18 years old", 12, 18, -1.2, (3, 5)),
+    AgeBucket("19-25 years old", "19–25 years old", 19, 25, -0.3, (3, 3)),
+    AgeBucket("26-35 years old", "26–35 years old", 26, 35,  0.4, (3, 3)),
+    AgeBucket("35-50 years old", "35–50 years old", 36, 50,  1.5, (3, 3)),
+    # svm_offset raised to 3.5: the model skews young.
+    # tolerance (10, 5): accept from ~41 (model hard ceiling ~50)
+    AgeBucket("50+ years old",   "50+ years old",        51, 75,  3.5, (10, 5), extreme=True),
+]
+AGE_BUCKETS_BY_KEY = {b.key: b for b in AGE_BUCKETS}
+
+# (lo, hi) per bucket key; derived from AGE_BUCKETS, kept for existing callers
+AGE_RANGES = {b.key: (b.lo, b.hi) for b in AGE_BUCKETS}
+
+# Truncation used when no age bucket is chosen ("Any")
+DEFAULT_TRUNCATION_PSI = 0.7
 
 # Measured response of rendered faces to the calibrated age edit, per
 # truncation_psi:  InsightFace age ≈ intercept + slope × calibrated predicted age.
@@ -33,10 +72,6 @@ AGE_RESPONSE = {
     0.7: (20.28, 0.515),
     0.5: (26.13, 0.414),
 }
-
-# Layers used for age editing in W+ space (coarse+mid for 1024px StyleGAN v1)
-# StyleGAN v1 @ 1024px has 18 style layers (0..17). We edit 0-11 (coarse+mid).
-AGE_EDIT_LAYERS = list(range(12))   # indices 0-11
 
 
 class LatentDirections:
@@ -73,16 +108,7 @@ class LatentDirections:
             self.age_coef = None   # signals: use _apply_age_svm() instead
             self.age_bias = None
             self.age_dir  = raw    # unit-norm boundary vector
-            self._age_mode = 'svm_fallback'
-            # Safe per-range scalars (empirically tuned, max 3.0 to stay in-distribution)
-            self._svm_offsets = {
-                "1-11 years old":  -2.5,
-                "12-18 years old": -1.2,
-                "19-25 years old": -0.3,
-                "26-35 years old":  0.4,
-                "35-50 years old":  1.5,
-                "50+ years old":    3.5,   # raised: model skews young
-            }
+            self._age_mode = 'svm_fallback'  # offsets: AgeBucket.svm_offset
             print("[LatentDirections] age_regression.npz not found — using "
                   "InterFaceGAN SVM boundary as fallback. "
                   "Run scripts/fit_age_direction.py for better accuracy.")
@@ -122,18 +148,13 @@ class LatentDirections:
             downloads.verify_existing(filepath, expected)
         return np.load(filepath)
 
-    def _predict_age(self, z):
-        """Predict age for a single z vector (shape (512,))."""
-        return float(z.ravel() @ self.age_coef + self.age_bias)
-
     def _set_age(self, z, target_age, max_shift=4.0, truncation_psi=None):
         """
         Move z so that its predicted age equals target_age.
         Only called in regression mode. age_dir is scaled so that one unit
         along it is one year; the latent step is clamped to max_shift latent
         units (Euclidean length) so the latent never leaves the model's
-        training distribution. Extreme age buckets pass a higher max_shift
-        (up to 7.0).
+        training distribution. Callers pass the bucket's AgeBucket.max_shift.
         If truncation_psi has a measured response in AGE_RESPONSE, the target
         is converted to the predicted age that renders at target_age.
         """
@@ -156,17 +177,15 @@ class LatentDirections:
         z = latents.astype('float64')
 
         # ── Age filter ───────────────────────────────────────────────────
-        if age != "Any" and age in AGE_RANGES:
-            # Extreme buckets push harder to overcome FFHQ's adult bias
-            extreme = age in ("1-11 years old", "50+ years old")
+        bucket = AGE_BUCKETS_BY_KEY.get(age)  # None for "Any"
+        if bucket is not None:
             if self._age_mode == 'regression':
-                lo, hi = AGE_RANGES[age]
-                target = float(np.random.uniform(lo, hi))
-                z = self._set_age(z, target, max_shift=7.0 if extreme else 4.0,
+                target = float(np.random.uniform(bucket.lo, bucket.hi))
+                z = self._set_age(z, target, max_shift=bucket.max_shift,
                                   truncation_psi=truncation_psi)
             else:
                 # SVM fallback: safe direct offset, no regression math
-                scalar = self._svm_offsets.get(age, 0.0)
+                scalar = bucket.svm_offset
                 d = self.age_dir.reshape(1, -1)
                 proj = np.sum(z * d, axis=1, keepdims=True)
                 z = z - proj * d              # remove existing age component
@@ -274,27 +293,17 @@ class GeneratorThread(QThread):
         Returns (img_data, latents), or (None, None) if the run was cancelled
         before an image was accepted.
         """
-        lo, hi = AGE_RANGES.get(self.age, (None, None))
-        use_validation = (lo is not None and
+        bucket = AGE_BUCKETS_BY_KEY.get(self.age)  # None for "Any": no age check
+        use_validation = (bucket is not None and
                          _AgeEstimator.get()._available)
-
-        # FFHQ skews 20-40 y/o; extreme buckets need more attempts + wider window
-        extreme = self.age in ("1-11 years old", "50+ years old")
-        max_tries = 10 if extreme else 5
-
-        # Per-bucket acceptance tolerance (lo - tol_lo, hi + tol_hi)
-        TOL = {
-            "1-11 years old":  (2,  12),  # accept up to ~23  (model hard floor ~18)
-            "12-18 years old": (3,   5),
-            "19-25 years old": (3,   3),
-            "26-35 years old": (3,   3),
-            "35-50 years old": (3,   3),
-            "50+ years old":   (10,  5),  # accept from ~41   (model hard ceiling ~50)
-        }
-        tol_lo, tol_hi = TOL.get(self.age, (3, 3))
-
-        # Extreme buckets use lower truncation for more variety
-        trunc = 0.5 if extreme else 0.7
+        if bucket is not None:
+            lo, hi = bucket.lo, bucket.hi
+            tol_lo, tol_hi = bucket.tolerance
+            max_tries = bucket.max_tries
+            trunc = bucket.truncation_psi
+        else:
+            max_tries = 1  # nothing to validate, so the first image is used
+            trunc = DEFAULT_TRUNCATION_PSI
 
         for attempt in range(max_tries):
             if self.isInterruptionRequested():

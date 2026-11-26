@@ -168,7 +168,8 @@ def main():
              age_bias=np.array(bias),
              age_dir=age_dir,
              age_mean=np.array(ages.mean()))
-    print(f"[fit_age_direction] Saved → {args.out}")
+    # plain ASCII: "→" crashed with UnicodeEncodeError when output was redirected
+    print(f"[fit_age_direction] Saved -> {args.out}")
     print("You can now run the main app — it will pick up the new regression direction automatically.")
 
 

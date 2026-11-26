@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QSize, QRegExp
 from PyQt5.QtGui import QFont, QRegExpValidator
 
+from engine import AGE_BUCKETS
 from .constants import MAX_IMAGES
 from .icons import svg_pixmap, make_icon
 from .widgets import ElidedLabel, StepperEdit
@@ -131,17 +132,10 @@ def build_sidebar(window):
     vl.addSpacing(4)
     window.age_combo = QComboBox()
     window.age_combo.setView(QListView())  # lets QSS style the popup items
-    # (label shown to the user, exact value the engine already expects)
-    for shown, value in [
-        ("Any", "Any"),
-        ("1\u201311 years old", "1-11 years old"),
-        ("12\u201318 years old", "12-18 years old"),
-        ("19\u201325 years old", "19-25 years old"),
-        ("26\u201335 years old", "26-35 years old"),
-        ("35\u201350 years old", "35-50 years old"),
-        ("50+ years old", "50+ years old"),
-    ]:
-        window.age_combo.addItem(shown, value)
+    # items: (label shown to the user, bucket key the engine expects)
+    window.age_combo.addItem("Any", "Any")
+    for bucket in AGE_BUCKETS:
+        window.age_combo.addItem(bucket.label, bucket.key)
     window.age_combo.setCurrentIndex(window.age_combo.findData("35-50 years old"))
     window.age_combo.setCursor(Qt.PointingHandCursor)
     vl.addWidget(window.age_combo)
