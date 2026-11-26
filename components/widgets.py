@@ -67,13 +67,18 @@ class PreviewCanvas(QFrame):
         self.setMinimumSize(260, 260)
         self._pixmap = None
         self._scaled = None
+        self._message = self.PLACEHOLDER_TEXT
         self._icon_renderer = QSvgRenderer(
             QByteArray(_svg_markup("user", "#4a5266", 0.95).encode("utf-8"))
         )
 
-    def set_image(self, pixmap):
+    PLACEHOLDER_TEXT = "Generated face appears here, scaled to fit"
+
+    def set_image(self, pixmap, message=None):
+        """Show `pixmap`, or the placeholder with `message` (default hint) if None."""
         self._pixmap = pixmap
         self._scaled = None
+        self._message = message or self.PLACEHOLDER_TEXT
         self.update()
 
     def clear_image(self):
@@ -118,5 +123,5 @@ class PreviewCanvas(QFrame):
         p.drawText(
             QRectF(rect.x(), cy + 62, rect.width(), 28),
             Qt.AlignHCenter | Qt.AlignVCenter,
-            "Generated face appears here, scaled to fit",
+            self._message,
         )

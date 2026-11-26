@@ -1,19 +1,29 @@
 """Preview navigation and the thumbnail strip."""
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QPixmap
 
 from .constants import THUMB_VISIBLE
-from .qt_helpers import array_to_pixmap
+from .qt_helpers import load_image
+
+MISSING_FILE_TEXT = "Image file not found"
 
 
 class GalleryMixin:
-    def _show_image_at(self, index):
+    def _show_image_at(self, index, pixmap=None):
+        """Show image `index` in the preview. Full-size images aren't kept in
+        memory, so it's read from its file unless `pixmap` is already at hand."""
         if not self._images:
             self.preview_canvas.clear_image()
             return
         index = max(0, min(index, len(self._images) - 1))
         self._current_index = index
-        self.preview_canvas.set_image(array_to_pixmap(self._images[index]["array"]))
+        if pixmap is None:
+            image = load_image(self._images[index]["path"])
+            pixmap = QPixmap.fromImage(image) if image is not None else None
+        if pixmap is None:
+            self.preview_canvas.set_image(None, message=MISSING_FILE_TEXT)
+        else:
+            self.preview_canvas.set_image(pixmap)
         self._update_nav_and_toolbar()
         self._refresh_gallery()
 

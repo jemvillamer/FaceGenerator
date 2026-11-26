@@ -27,7 +27,7 @@ class FaceGeneratorApp(ControlsMixin, StatusMixin, GenerationMixin, GalleryMixin
         self._generating = False
         self._cancelling = False
         self._follow_latest = True  # big preview follows each new image
-        self._images = []  # list of {"path": str, "array": ndarray, "icon": QIcon}
+        self._images = []  # list of {"path": str, "icon": QIcon}; full image is read from path
         self._current_index = 0
         self._thumb_start = 0
         self._image_count = 20

@@ -128,13 +128,14 @@ class GenerationMixin:
     def on_image_generated(self, img_array, path):
         # `path` is where the worker actually saved the file; don't rebuild it
         # from the gallery index, which drifts once an image is deleted mid-run.
+        # Only the path and thumbnail are kept; the full image is read back from
+        # its file when needed (keeping arrays cost ~3 MB per image).
         idx = len(self._images)
-        arr = img_array.copy()
-        icon = make_thumb_icon(array_to_pixmap(arr))
-        self._images.append({"path": path, "array": arr, "icon": icon})
+        pixmap = array_to_pixmap(img_array)
+        self._images.append({"path": path, "icon": make_thumb_icon(pixmap)})
         if self._follow_latest:
-            # show the newest image in the big preview right away
-            self._show_image_at(idx)        # also refreshes the thumbnails
+            # show the newest image in the big preview right away, from memory
+            self._show_image_at(idx, pixmap=pixmap)  # also refreshes the thumbnails
             self.preview_canvas.repaint()   # force a paint so every image is seen
         else:
             self._refresh_gallery()         # user is browsing: just fill the slot
