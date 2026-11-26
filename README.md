@@ -12,6 +12,7 @@ A desktop application for generating photorealistic human faces using **StyleGAN
 - [Optional: Age Calibration (Recommended)](#optional-age-calibration-recommended)
 - [Project Structure](#project-structure)
 - [Filters Reference](#filters-reference)
+- [Running the Tests](#running-the-tests)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
@@ -124,6 +125,19 @@ The next time you start the app you will see:
 | `--alpha` | `0.001` | Ridge regularisation strength |
 | `--out` | `cache/age_regression.npz` | Output file path |
 
+### After recalibrating: re-measure the age response
+
+Rendered faces move less than the calibration predicts, so `latents.py` holds a measured
+correction (`AGE_RESPONSE`). After running `fit_age_direction.py` again, re-measure it:
+
+```powershell
+python scripts\measure_age_response.py
+```
+
+It renders real faces (~12 minutes on CPU), prints a new `AGE_RESPONSE` table to paste into
+`latents.py`, and reports how many faces land in each age bucket. Use `--fit-samples` and
+`--report-samples` to trade accuracy for time.
+
 ---
 
 ## Project Structure
@@ -140,6 +154,9 @@ FaceGenerator/
 |-- downloads.py              # Downloaded files, their checksums, verified download helpers
 |-- style.qss                 # Qt stylesheet for the UI
 |-- requirements.txt          # Pinned Python dependencies
+|-- requirements-dev.txt      # Test dependencies (pytest)
+|-- pytest.ini                # Test settings (markers, default selection)
+|-- tests/                    # pytest suite (see "Running the Tests")
 ├── ui/
 │   ├── window.py                   # FaceGeneratorApp: __init__ and wiring only
 │   │                               
@@ -170,7 +187,8 @@ FaceGenerator/
 │   └── image_actions.py            # Image operations: Save as, Copy, Delete
 |
 |-- scripts/
-|   `-- fit_age_direction.py  # One-time age calibration script
+|   |-- fit_age_direction.py     # One-time age calibration script
+|   `-- measure_age_response.py  # Re-measure AGE_RESPONSE after recalibrating
 |
 |-- dnnlib/                   # NVIDIA dnnlib (TF graph utilities)
 |-- training/                 # StyleGAN training code (not needed to run the app)
@@ -209,6 +227,20 @@ FaceGenerator/
 
 Steers the face toward male or female using the InterFaceGAN gender boundary.
 Selecting **Any** leaves gender untouched (random from the model).
+
+---
+
+## Running the Tests
+
+```powershell
+pip install -r requirements-dev.txt   # once: installs pytest
+python -m pytest                      # ~100 tests, ~15 s; needs neither the model nor internet
+python -m pytest -m model             # tests with the real model in cache/ (~20 s)
+python -m pytest -m network           # checks the pinned boundary downloads (needs internet)
+```
+
+The default run uses small synthetic boundary/calibration files and a fake generator
+network, so it works on a fresh checkout. The UI tests run offscreen; no window appears.
 
 ---
 
