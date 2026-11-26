@@ -23,7 +23,7 @@ A desktop application for generating photorealistic human faces using **StyleGAN
 |---|---|---|
 | **Python** | **3.7.x** | Strictly 3.7 — TF 1.15 does not support 3.8+ |
 | **pip** | any recent | bundled with Python |
-| **Internet connection** | — | First run downloads the model (~350 MB) and boundary vectors |
+| **Internet connection** | — | First run downloads the model (~325 MB) and boundary vectors |
 | **RAM** | >= 8 GB | Model loading + inference is memory-heavy on CPU |
 | **Disk** | >= 1.5 GB free | Model + cache files |
 
@@ -79,7 +79,7 @@ python app.py
 ```
 
 On first launch the app will automatically:
-1. Download the pretrained StyleGAN FFHQ model (~350 MB) into `cache/`
+1. Download the pretrained StyleGAN FFHQ model (~325 MB) into `cache/`
 2. Download the age and gender boundary vectors from InterFaceGAN into `cache/`
 
 This only happens once. Subsequent launches are instant.
@@ -133,6 +133,7 @@ FaceGenerator/
 |-- app.py                    # PyQt5 UI -- main entry point
 |-- engine.py                 # StyleGAN loading, LatentDirections, generation threads
 |-- config.py                 # Paths (cache dir, model dir)
+|-- downloads.py              # Downloaded files, their checksums, verified download helpers
 |-- style.qss                 # Qt stylesheet for the UI
 |-- requirements.txt          # Pinned Python dependencies
 ├── ui/
@@ -214,8 +215,13 @@ Selecting **Any** leaves gender untouched (random from the model).
 - Confirm Python version is 3.7: `python --version`
 
 ### "Model loading..." never finishes
-- Check your internet connection -- the model (~350 MB) must download on first run.
-- If the download was interrupted, delete the partial file in `cache/` and restart.
+- Check your internet connection -- the model (~325 MB) must download on first run.
+- An interrupted or failed download is discarded automatically (it never replaces the real file); just restart.
+
+### "doesn't match the expected checksum"
+- Every downloaded file is checked before use. This error means the file named in the
+  message is corrupt, incomplete or not the expected file, so it wasn't loaded.
+- Delete that file from `cache/` and restart the app to download it again.
 
 ### Images look psychedelic / corrupted
 - This was caused by the age latent edit going out of distribution.

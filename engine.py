@@ -79,6 +79,8 @@ tf.nn.conv2d = _cpu_conv2d
 import dnnlib
 import dnnlib.tflib as tflib
 import config
+import downloads
+from downloads import ChecksumError
 
 
 # ---------------------------------------------------------------------------
@@ -182,11 +184,14 @@ class LatentDirections:
         import urllib.request
         os.makedirs(config.cache_dir, exist_ok=True)
         filepath = os.path.join(config.cache_dir, filename)
+        expected = downloads.BOUNDARY_SHA256[filename]
         if not os.path.exists(filepath):
-            url = (f"https://raw.githubusercontent.com/genforce/interfacegan"
-                   f"/master/boundaries/{filename}")
             print(f"[LatentDirections] Downloading {filename}…")
-            urllib.request.urlretrieve(url, filepath)
+            downloads.fetch_verified(
+                lambda tmp: urllib.request.urlretrieve(downloads.boundary_url(filename), tmp),
+                filepath, expected)
+        else:
+            downloads.verify_existing(filepath, expected)
         return np.load(filepath)
 
     def _predict_age(self, z):
@@ -308,11 +313,16 @@ def load_model():
     tflib.init_tf({"allow_soft_placement": True, "log_device_placement": False})
 
     os.makedirs(config.cache_dir, exist_ok=True)
-    model_path = os.path.join(config.cache_dir, 'karras2019stylegan-ffhq-1024x1024.pkl')
+    model_path = os.path.join(config.cache_dir, downloads.MODEL_FILE)
 
+    # Unpickling runs code, so the file is checked before it's loaded (~0.5 s)
     if not os.path.exists(model_path):
-        print("Downloading pretrained model (~350MB)...")
-        gdown.download(id='1MEGjdvVpUsu1jB4zrXZN7Y4kBBOzizDQ', output=model_path, quiet=False)
+        print("Downloading pretrained model (~325MB)...")
+        downloads.fetch_verified(
+            lambda tmp: gdown.download(id=downloads.MODEL_GDRIVE_ID, output=tmp, quiet=False),
+            model_path, downloads.MODEL_SHA256)
+    else:
+        downloads.verify_existing(model_path, downloads.MODEL_SHA256)
 
     print("Loading model...")
     with open(model_path, 'rb') as f:
@@ -442,6 +452,8 @@ class GeneratorThread(QThread):
                         self.preview.emit(img_data, png_filename)
 
             self.completed.emit(saved, saved < self.num_images)
+        except ChecksumError as e:
+            self.error.emit(str(e))  # readable message instead of a traceback
         except Exception as e:
             import traceback
             self.error.emit(traceback.format_exc())
@@ -456,6 +468,8 @@ class ModelLoaderThread(QThread):
         try:
             Gs, session, graph = load_model()
             self.model_loaded.emit(Gs, session, graph)
+        except ChecksumError as e:
+            self.error.emit(str(e))  # readable message instead of a traceback
         except Exception as e:
             import traceback
             self.error.emit(traceback.format_exc())

@@ -93,6 +93,7 @@ def _cpu_conv2d(input, filter=None, strides=None, padding=None, use_cudnn_on_gpu
 tf.nn.conv2d = _cpu_conv2d
 
 import dnnlib.tflib as tflib  # noqa: E402
+import downloads              # noqa: E402 – model checksum, shared with the app
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -154,11 +155,14 @@ def main():
     args = parse_args()
     rng  = np.random.RandomState(args.seed)
 
-    model_path = os.path.join(config.cache_dir,
-                               'karras2019stylegan-ffhq-1024x1024.pkl')
+    model_path = os.path.join(config.cache_dir, downloads.MODEL_FILE)
     if not os.path.exists(model_path):
         raise SystemExit(f"Model not found at {model_path}. "
                           "Run the main app once to download it.")
+    try:
+        downloads.verify_existing(model_path, downloads.MODEL_SHA256)  # before unpickling
+    except downloads.ChecksumError as e:
+        raise SystemExit(str(e))
 
     print(f"[fit_age_direction] Loading StyleGAN from {model_path} …")
     Gs = load_stylegan(model_path)
