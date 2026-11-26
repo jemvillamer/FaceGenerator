@@ -2,11 +2,19 @@
 
 A desktop application for generating photorealistic human faces using **StyleGAN v1** (FFHQ 1024x1024), with controls for **age range** and **gender** filters. Built with PyQt5 and TensorFlow 1.15, runs fully on **CPU** (no GPU required).
 
+There are two ways to use it:
+
+- **Install the app.** You need the Windows installer, `FaceGeneratorSetup-<version>.exe`, and
+  nothing else: no Python and no terminal. See [Installing the App](#installing-the-app).
+- **Run it from source.** For developers working on the code. Start at
+  [Prerequisites](#prerequisites).
+
 ---
 
 ## Table of Contents
 
-- [Prerequisites](#prerequisites)
+- [Installing the App](#installing-the-app)
+- [Prerequisites](#prerequisites) (running from source)
 - [Setup](#setup)
 - [Running the App](#running-the-app)
 - [Optional: Age Calibration (Recommended)](#optional-age-calibration-recommended)
@@ -19,7 +27,95 @@ A desktop application for generating photorealistic human faces using **StyleGAN
 
 ---
 
+## Installing the App
+
+### System requirements
+
+| Requirement | Notes |
+|---|---|
+| **Windows 10 or 11, 64-bit** | The installer doesn't run on 32-bit Windows, macOS or Linux |
+| **RAM: 8 GB or more** | Generating faces on the CPU uses a lot of memory |
+| **Disk: about 2.5 GB free** | The app (~1.3 GB) plus models downloaded on first use (~1 GB) |
+| **Internet on first use** | To download the face model and the age-check model. After that it works offline |
+
+No GPU, Python or admin rights are needed.
+
+### Install
+
+1. Get the installer, `FaceGeneratorSetup-<version>.exe`, from whoever built it. To build
+   it yourself, see [Building the Desktop App and Installer](#building-the-desktop-app-and-installer).
+2. Double-click it.
+3. Windows may show **"Windows protected your PC"**, because the installer isn't code-signed.
+   Click **More info**, then **Run anyway**.
+4. Follow the wizard:
+   - **Install for me only** (recommended) needs no admin rights.
+     **Install for all users** asks for an administrator.
+   - Accept the license. The face model is licensed for **non-commercial use only**; see [License](#license).
+   - Keep the suggested folder, or choose another.
+   - Optionally tick **Create a desktop shortcut**.
+5. Click **Install**, then **Finish**. The app opens if **Launch StyleGAN Face Generator**
+   is ticked.
+
+To open it later, search for **StyleGAN Face Generator** in the Start menu, or use the
+desktop shortcut.
+
+### First launch
+
+- The app downloads the face model (~325 MB) into its data folder. Meanwhile the status
+  card at the bottom left shows **Loading model...**, which can take a few minutes on a slow
+  connection. When it shows **Ready to generate**, you can start. Later launches skip the
+  download and are ready in a few seconds.
+- The first time you generate with an **age range** selected, the app also downloads the
+  age-check model (~280 MB) into `%USERPROFILE%\.insightface`. That first run takes longer.
+- If the installer was built with the model included (`-IncludeModel`), there's no face
+  model download and the app works offline from the start, except for the age-check download.
+
+How to use the controls is described in [Using the app](#using-the-app).
+
+### Where the app keeps its files
+
+| What | Where |
+|---|---|
+| The app itself | `%LOCALAPPDATA%\Programs\FaceGenerator\` (for me only)<br>`C:\Program Files\FaceGenerator\` (all users) |
+| Downloaded face model | `%LOCALAPPDATA%\FaceGenerator\cache\` |
+| Age-check model | `%USERPROFILE%\.insightface\models\` |
+| Log file | `%LOCALAPPDATA%\FaceGenerator\logs\facegen.log` |
+| Generated images (default) | `%USERPROFILE%\FaceGenerator\output\`, or the folder you choose with **Browse** |
+
+To open one of these folders, paste its path into File Explorer's address bar.
+
+### Updating
+
+Run the installer for the newer version. It replaces the old version in place, and
+your downloaded models and generated images are kept. Close the app first, or let the
+installer close it.
+
+### Uninstalling
+
+Go to **Settings > Apps > Installed apps**, find **StyleGAN Face Generator**, and choose
+**Uninstall**. The uninstaller asks whether to also delete the downloaded face model and
+the log files. Your generated images are never deleted. The age-check model in
+`%USERPROFILE%\.insightface` is also left in place, because other programs may use it;
+delete that folder yourself if you don't need it.
+
+### Installing on many PCs (silent install)
+
+The installer accepts the standard Inno Setup command-line options, so IT can deploy it
+without the wizard:
+
+```powershell
+FaceGeneratorSetup-1.0.0.exe /VERYSILENT /CURRENTUSER /NORESTART      # for the current user
+FaceGeneratorSetup-1.0.0.exe /VERYSILENT /ALLUSERS /NORESTART         # for all users (admin)
+```
+
+Add `/DIR="D:\Apps\FaceGenerator"` to choose the folder. To uninstall silently, run
+`unins000.exe /VERYSILENT` from the install folder.
+
+---
+
 ## Prerequisites
+
+These are for running from source. To just use the app, see [Installing the App](#installing-the-app).
 
 | Requirement | Version | Notes |
 |---|---|---|
@@ -89,7 +185,7 @@ This only happens once. Subsequent launches are instant.
 
 ### Using the app
 
-1. **Output Directory** - click **Browse** to choose where generated images are saved (defaults to `output/`)
+1. **Output Directory** - click **Browse** to choose where generated images are saved (defaults to `%USERPROFILE%\FaceGenerator\output`)
 2. **Number of Images** - how many faces to generate (1-1000, default 20)
 3. **Age Range** - select a bucket or leave as **Any** (default)
 4. **Gender** - Male, Female, or Any (default)
@@ -295,16 +391,19 @@ with `-IncludeModel`. The InsightFace age-check model (`buffalo_l`) is always do
 on first use, into `%USERPROFILE%\.insightface`.
 
 **Where the installed app keeps its files.** The install folder can be read-only, so the
-installed app writes elsewhere:
+installed app writes its downloads and logs to `%LOCALAPPDATA%\FaceGenerator\` instead of
+`cache\` and `logs\` (see `config.py`). The full list is in
+[Where the app keeps its files](#where-the-app-keeps-its-files).
 
-| What | Where |
-|---|---|
-| Downloaded model, boundary files | `%LOCALAPPDATA%\FaceGenerator\cache\` |
-| Log file | `%LOCALAPPDATA%\FaceGenerator\logs\facegen.log` |
-| Generated images (default) | `%USERPROFILE%\FaceGenerator\output\` |
+**Testing an installer without the wizard:** install it silently into a scratch folder,
+run the installed copy's self-test, then uninstall:
 
-Uninstalling asks whether to delete the downloaded model and logs. Generated images are
-always kept.
+```powershell
+.\dist\installer\FaceGeneratorSetup-1.0.0.exe /VERYSILENT /CURRENTUSER /DIR="$env:TEMP\fg-test"
+Start-Process "$env:TEMP\fg-test\FaceGenerator.exe" -ArgumentList '--self-test', "$env:TEMP\fg-selftest" -Wait
+Get-Content "$env:TEMP\fg-selftest\self_test.json"        # "ok": true
+Start-Process "$env:TEMP\fg-test\unins000.exe" -ArgumentList '/VERYSILENT' -Wait
+```
 
 **Things to know:**
 - The installed app takes about 1.3 GB, mostly TensorFlow, plus the model.
@@ -327,9 +426,22 @@ always kept.
   It has timestamps, each generation run with a summary (images saved, time taken, how
   many attempts the age check rejected), every age-check retry, and full details of any error.
 - Error dialogs show this path. Attach the file when reporting a problem.
-- The console shows the same events without the per-retry detail.
+- The console shows the same events without the per-retry detail (running from source only;
+  the installed app has no console).
 
-### App will not start / import errors
+### "Windows protected your PC" when running the installer
+- The installer isn't code-signed, so Windows SmartScreen doesn't recognise it. Click
+  **More info**, then **Run anyway**.
+- If there is no **Run anyway** button, your organisation blocks unsigned programs. Ask
+  your IT department to allow it.
+
+### The installed app doesn't open, or closes straight away
+- Check the log, `%LOCALAPPDATA%\FaceGenerator\logs\facegen.log`, for the error.
+- Make sure the PC has at least 8 GB of RAM, and close other heavy programs.
+- Antivirus software sometimes quarantines files from unsigned apps. If files are missing
+  from the install folder, restore them or allow the app, then reinstall.
+
+### App will not start / import errors (running from source)
 - Make sure you activated `.venv37` before running `python app.py`.
 - Confirm Python version is 3.7: `python --version`
 
@@ -340,7 +452,8 @@ always kept.
 ### "doesn't match the expected checksum"
 - Every downloaded file is checked before use. This error means the file named in the
   message is corrupt, incomplete or not the expected file, so it wasn't loaded.
-- Delete that file from `cache/` and restart the app to download it again.
+- Delete that file and restart the app to download it again. It's in `cache\` when running
+  from source, or `%LOCALAPPDATA%\FaceGenerator\cache\` for the installed app.
 
 ### Images look psychedelic / corrupted
 - This was caused by the age latent edit going out of distribution.
@@ -360,7 +473,7 @@ E tensorflow/stream_executor/cuda/cuda_driver.cc:318] failed call to cuInit: UNK
 ```
 This is harmless: TF 1.15 always looks for CUDA first. The app runs correctly on CPU.
 
-### PowerShell execution policy error when activating venv
+### PowerShell execution policy error when activating venv (running from source)
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
