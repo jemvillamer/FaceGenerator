@@ -4,6 +4,8 @@ report back to the UI through signals.
 The logic lives in Qt-free modules: model.py (loading), latents.py (age buckets
 and latent edits) and generator.py (retry loop, batch run, output numbering).
 """
+import logging
+
 import numpy as np
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -17,6 +19,8 @@ from latents import (AgeBucket, AGE_BUCKETS, AGE_BUCKETS_BY_KEY, AGE_RANGES,  # 
                      AGE_RESPONSE, DEFAULT_TRUNCATION_PSI, LatentDirections)
 from generator import AgeEstimator, next_output_index  # noqa: F401
 _AgeEstimator = AgeEstimator  # previous name (same class)
+
+log = logging.getLogger(__name__)
 
 
 class GeneratorThread(QThread):
@@ -50,8 +54,10 @@ class GeneratorThread(QThread):
                 on_saved=self._on_saved)
             self.completed.emit(saved, saved < self.num_images)
         except ChecksumError as e:
+            log.error("Generation stopped: %s", e)
             self.error.emit(str(e))  # readable message instead of a traceback
         except Exception as e:
+            log.exception("Generation failed")
             import traceback
             self.error.emit(traceback.format_exc())
 
@@ -66,7 +72,9 @@ class ModelLoaderThread(QThread):
             Gs, session, graph = load_model()
             self.model_loaded.emit(Gs, session, graph)
         except ChecksumError as e:
+            log.error("Model not loaded: %s", e)
             self.error.emit(str(e))  # readable message instead of a traceback
         except Exception as e:
+            log.exception("Model loading failed")
             import traceback
             self.error.emit(traceback.format_exc())

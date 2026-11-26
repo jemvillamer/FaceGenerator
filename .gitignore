@@ -6,3 +6,4 @@ __pycache__/
 .pytest_cache/
 output/
 python-*.exe
+logs/

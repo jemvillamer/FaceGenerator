@@ -2,8 +2,10 @@
 
 Shared by the app (engine.py) and scripts/fit_age_direction.py.
 """
+import logging
 import os
 import pickle
+import time
 
 import tensorflow as tf
 
@@ -17,6 +19,8 @@ import downloads              # noqa: E402
 # Gs.run(..., output_transform=OUTPUT_TRANSFORM) returns uint8 NHWC images.
 # (Network.run copies this dict, so sharing one instance is safe.)
 OUTPUT_TRANSFORM = dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True)
+
+log = logging.getLogger(__name__)
 
 
 def model_path():
@@ -40,16 +44,19 @@ def load_model(download=True):
         if not download:
             raise FileNotFoundError(path)
         import gdown
-        print("Downloading pretrained model (~325MB)...")
+        log.info("Downloading the pretrained model (~325 MB) to %s ...", path)
+        started = time.monotonic()
         downloads.fetch_verified(
             lambda tmp: gdown.download(id=downloads.MODEL_GDRIVE_ID, output=tmp, quiet=False),
             path, downloads.MODEL_SHA256)
+        log.info("Download finished in %.0f s", time.monotonic() - started)
     else:
         downloads.verify_existing(path, downloads.MODEL_SHA256)  # ~0.5 s
 
-    print("Loading model...")
+    log.info("Loading model...")
+    started = time.monotonic()
     with open(path, 'rb') as f:
         _G, _D, Gs = pickle.load(f)
 
-    print("Model loaded successfully.")
+    log.info("Model loaded in %.1f s", time.monotonic() - started)
     return Gs, tf.get_default_session(), tf.get_default_graph()

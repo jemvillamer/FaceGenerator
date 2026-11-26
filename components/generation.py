@@ -5,6 +5,7 @@ import subprocess
 
 from PyQt5.QtWidgets import QMessageBox, QFileDialog
 
+import log_setup
 from engine import ModelLoaderThread, GeneratorThread
 from .icons import make_icon
 from .qt_helpers import _repolish, array_to_pixmap, make_thumb_icon
@@ -61,8 +62,11 @@ class GenerationMixin:
         self._set_status("idle", "Ready to generate", "Choose filters and click Generate images")
 
     def on_model_load_error(self, err):
-        self._set_status("error", "Failed to load model", "Check console for details")
-        QMessageBox.critical(self, "Model Load Error", f"Failed to load the model:\n\n{err}")
+        self._set_status("error", "Failed to load model",
+                         "Details in logs\\facegen.log" if log_setup.active_log_file()
+                         else "See details in the dialog")
+        QMessageBox.critical(self, "Model Load Error",
+                             f"Failed to load the model:\n\n{err}{log_setup.details_hint()}")
 
     def browse_output(self):
         start = self.path_input.text() or self._output_dir
@@ -184,4 +188,4 @@ class GenerationMixin:
         self._end_run()
         self._refresh_gallery()
         self._set_status("error", "Error during generation", "See details in the dialog")
-        QMessageBox.critical(self, "Error", f"An error occurred:\n\n{err}")
+        QMessageBox.critical(self, "Error", f"An error occurred:\n\n{err}{log_setup.details_hint()}")

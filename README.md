@@ -114,10 +114,10 @@ python scripts\fit_age_direction.py --samples 2000
 ```
 
 This takes **~20-30 minutes on CPU**. When it finishes it writes `cache/age_regression.npz`.
-The next time you start the app you will see:
+The next time you generate images, the console and `logs\facegen.log` show:
 
 ```
-[LatentDirections] Using calibrated ridge-regression age direction.
+[latents] Using calibrated ridge-regression age direction.
 ```
 
 ### Calibration options
@@ -156,6 +156,7 @@ FaceGenerator/
 |-- tf_compat.py              # CPU patches so the NCHW model runs on TensorFlow CPU
 |-- config.py                 # Paths (cache dir, model dir)
 |-- downloads.py              # Downloaded files, their checksums, verified download helpers
+|-- log_setup.py              # Logging: console, logs/facegen.log, quieter TensorFlow, error hook
 |-- style.qss                 # Qt stylesheet for the UI
 |-- requirements.txt          # Pinned Python dependencies
 |-- requirements-dev.txt      # Test dependencies (pytest)
@@ -204,6 +205,7 @@ FaceGenerator/
 |   |-- stylegan_ffhq_gender_boundary.npy       # SVM boundary (auto-downloaded)
 |   `-- age_regression.npz                      # Created by fit_age_direction.py
 |
+|-- logs/                     # facegen.log (auto-created; see "Where to find logs")
 `-- output/                   # Default output folder for generated images
 ```
 
@@ -250,6 +252,13 @@ network, so it works on a fresh checkout. The UI tests run offscreen; no window 
 
 ## Troubleshooting
 
+### Where to find logs
+- The app writes `logs\facegen.log` in the project folder (rotated at 1 MB, 3 backups kept).
+  It has timestamps, each generation run with a summary (images saved, time taken, how
+  many attempts the age check rejected), every age-check retry, and full details of any error.
+- Error dialogs show this path. Attach the file when reporting a problem.
+- The console shows the same events without the per-retry detail.
+
 ### App will not start / import errors
 - Make sure you activated `.venv37` before running `python app.py`.
 - Confirm Python version is 3.7: `python --version`
@@ -273,12 +282,13 @@ network, so it works on a fresh checkout. The UI tests run offscreen; no window 
 ### InsightFace `ValueError: operands could not be broadcast ... shapes (18,) (32,)`
 - Was a `det_size=112` issue (not a multiple of 32). Fixed -- current version uses `det_size=160`.
 
-### TensorFlow CUDA / GPU warnings
+### TensorFlow CUDA / GPU messages
+TensorFlow's warnings and deprecation notices are hidden (errors still show), but one
+line remains on machines without an NVIDIA GPU:
 ```
-Could not load dynamic library 'cudart64_100.dll'
+E tensorflow/stream_executor/cuda/cuda_driver.cc:318] failed call to cuInit: UNKNOWN ERROR (303)
 ```
-This is harmless on a CPU-only machine. TF 1.15 always attempts to find CUDA.
-The app runs correctly on CPU regardless.
+This is harmless: TF 1.15 always looks for CUDA first. The app runs correctly on CPU.
 
 ### PowerShell execution policy error when activating venv
 ```powershell

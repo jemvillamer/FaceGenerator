@@ -31,6 +31,8 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+import log_setup                     # noqa: E402
+log_setup.configure(log_file=False)  # console only; quiets TensorFlow (before it's imported)
 import downloads                     # noqa: E402
 import model                         # noqa: E402  (installs the TF CPU patches)
 from generator import AgeEstimator   # noqa: E402

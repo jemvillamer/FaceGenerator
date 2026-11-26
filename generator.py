@@ -5,13 +5,17 @@ No Qt and no TensorFlow import: the model (Gs, session, graph) and its output
 transform are passed in, and progress/cancellation go through plain callbacks.
 engine.py wraps generate_batch in a QThread for the app.
 """
+import logging
 import os
 import re
+import time
 
 import numpy as np
 import PIL.Image
 
 from latents import AGE_BUCKETS_BY_KEY, DEFAULT_TRUNCATION_PSI, LatentDirections
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -40,8 +44,7 @@ class AgeEstimator:
             self._app = app
             self._available = True
         except Exception as e:
-            print(f"[AgeEstimator] InsightFace not available ({e}). "
-                  "Closed-loop validation disabled.")
+            log.warning("InsightFace not available (%s); the age check is disabled.", e)
             self._available = False
 
     def estimate(self, img_rgb):
@@ -59,7 +62,8 @@ class AgeEstimator:
             areas = [(f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]) for f in faces]
             return float(faces[int(np.argmax(areas))].age)
         except Exception as e:
-            print(f"[AgeEstimator] estimate() failed: {e}")
+            log.warning("Age estimate failed: %s", e)
+            log.debug("Age estimate failure details", exc_info=True)
             return None
 
 
@@ -84,14 +88,18 @@ def next_output_index(output_dir):
 # Generation
 # ---------------------------------------------------------------------------
 def generate_one(Gs, latent_dirs, age, gender, output_transform,
-                 should_stop=lambda: False):
+                 should_stop=lambda: False, stats=None):
     """
     Closed-loop generation: keep retrying until the generated image's
     estimated age falls within the requested range (with per-bucket
     tolerance), or until max_tries is exhausted.
     Returns (img_data, latents), or (None, None) if should_stop() became true
     before an image was accepted.
+    stats, if given, is a dict whose 'attempts', 'rejected' and 'no_face'
+    counts are increased (used for the per-run summary in the log).
     """
+    if stats is None:
+        stats = {}
     bucket = AGE_BUCKETS_BY_KEY.get(age)  # None for "Any": no age check
     use_validation = (bucket is not None and
                       AgeEstimator.get()._available)
@@ -117,19 +125,23 @@ def generate_one(Gs, latent_dirs, age, gender, output_transform,
                         randomize_noise=True,
                         output_transform=output_transform)
         img_data = images[0]
+        stats['attempts'] = stats.get('attempts', 0) + 1
 
         if not use_validation:
             break  # no estimator — just return first result
 
         est_age = AgeEstimator.get().estimate(img_data)
         if est_age is None:
+            stats['no_face'] = stats.get('no_face', 0) + 1
+            log.debug("age=%s: no face detected, attempt %d/%d", age, attempt + 1, max_tries)
             continue  # no face detected — retry
 
         if (lo - tol_lo) <= est_age <= (hi + tol_hi):
             break  # within tolerance — accept
 
-        print(f"[generator] age={age} target=[{lo},{hi}] "
-              f"got={est_age:.1f}  retry {attempt+1}/{max_tries}")
+        stats['rejected'] = stats.get('rejected', 0) + 1
+        log.debug("age=%s target=[%d,%d] got=%.1f, attempt %d/%d",
+                  age, lo, hi, est_age, attempt + 1, max_tries)
 
     return img_data, latents
 
@@ -145,6 +157,10 @@ def generate_batch(Gs, session, graph, num_images, age, gender, output_dir,
     and stops early (between images or retries) once should_stop() is true.
     Returns the number of images saved. Errors propagate to the caller.
     """
+    log.info("Generating %d image(s): age=%s, gender=%s, into %s",
+             num_images, age, gender, output_dir)
+    started = time.monotonic()
+    stats = {'attempts': 0, 'rejected': 0, 'no_face': 0}
     latent_dirs = LatentDirections()
     os.makedirs(output_dir, exist_ok=True)
     file_index = next_output_index(output_dir)
@@ -156,7 +172,7 @@ def generate_batch(Gs, session, graph, num_images, age, gender, output_dir,
                 if should_stop():
                     break
                 img_data, _latents = generate_one(
-                    Gs, latent_dirs, age, gender, output_transform, should_stop)
+                    Gs, latent_dirs, age, gender, output_transform, should_stop, stats)
                 if img_data is None:
                     break  # cancelled mid-retry; nothing to save
                 png_filename = os.path.join(
@@ -170,4 +186,9 @@ def generate_batch(Gs, session, graph, num_images, age, gender, output_dir,
                 saved += 1
                 on_saved(saved, img_data, png_filename)
 
+    log.info("Saved %d of %d image(s) in %.1f s (%d attempts: %d rejected by the "
+             "age check, %d with no face detected)%s",
+             saved, num_images, time.monotonic() - started, stats['attempts'],
+             stats['rejected'], stats['no_face'],
+             "; stopped early" if saved < num_images else "")
     return saved

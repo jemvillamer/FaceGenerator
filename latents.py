@@ -4,6 +4,7 @@ Pure numpy (no Qt, no TensorFlow): AGE_BUCKETS holds every rule tied to an
 age choice, and LatentDirections applies the age and gender edits to Z
 latents. Used by generator.py and, for the dropdown, by the sidebar.
 """
+import logging
 import os
 from dataclasses import dataclass
 
@@ -11,6 +12,8 @@ import numpy as np
 
 import config
 import downloads
+
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +100,7 @@ class LatentDirections:
             self.age_bias = float(data['age_bias'])
             self.age_dir  = data['age_dir'].astype('float64')
             self._age_mode = 'regression'
-            print("[LatentDirections] Using calibrated ridge-regression age direction.")
+            log.info("Using calibrated ridge-regression age direction.")
         else:
             # Fallback: InterFaceGAN SVM boundary.
             # We stay in the simple offset world here — the regression path
@@ -109,9 +112,9 @@ class LatentDirections:
             self.age_bias = None
             self.age_dir  = raw    # unit-norm boundary vector
             self._age_mode = 'svm_fallback'  # offsets: AgeBucket.svm_offset
-            print("[LatentDirections] age_regression.npz not found — using "
-                  "InterFaceGAN SVM boundary as fallback. "
-                  "Run scripts/fit_age_direction.py for better accuracy.")
+            log.warning("age_regression.npz not found: using the InterFaceGAN SVM "
+                        "boundary as a fallback (less accurate). "
+                        "Run scripts/fit_age_direction.py for better accuracy.")
 
         # Orthogonalize age against gender to reduce entanglement
         g = self.gender_boundary.ravel()
@@ -140,7 +143,7 @@ class LatentDirections:
         filepath = os.path.join(config.cache_dir, filename)
         expected = downloads.BOUNDARY_SHA256[filename]
         if not os.path.exists(filepath):
-            print(f"[LatentDirections] Downloading {filename}…")
+            log.info("Downloading %s ...", filename)
             downloads.fetch_verified(
                 lambda tmp: urllib.request.urlretrieve(downloads.boundary_url(filename), tmp),
                 filepath, expected)

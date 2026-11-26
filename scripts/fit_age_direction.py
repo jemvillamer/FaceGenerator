@@ -31,6 +31,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import config                                # noqa: E402 – project config
+import log_setup                             # noqa: E402
+log_setup.configure(log_file=False)  # console only; quiets TensorFlow (before it's imported)
 
 # model.py installs the CPU patches (tf_compat) and loads/verifies the model,
 # shared with the app.

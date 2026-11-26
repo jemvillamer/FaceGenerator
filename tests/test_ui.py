@@ -237,6 +237,35 @@ def test_image_file_deleted_outside_the_app(qapp, window, warnings, monkeypatch,
     assert len(window._images) == 2 and warnings == []
 
 
+# ── error dialogs ──────────────────────────────────────────────────────────
+def test_unexpected_error_dialog_is_throttled_and_never_stacked(window, monkeypatch):
+    import log_setup
+    monkeypatch.setattr(log_setup, "active_log_file", lambda: "C:/project/logs/facegen.log")
+    shown = []
+
+    def critical(parent, title, text):
+        shown.append(text)
+        window.report_unexpected_error()     # another error while the dialog is open
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(critical))
+    window.report_unexpected_error()
+    window.report_unexpected_error()         # repeats right away
+    assert len(shown) == 1
+    assert "C:/project/logs/facegen.log" in shown[0] and "restarting is safest" in shown[0]
+
+
+def test_error_dialogs_point_to_the_log_file(window, monkeypatch):
+    import log_setup
+    monkeypatch.setattr(log_setup, "active_log_file", lambda: "C:/project/logs/facegen.log")
+    shown = []
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda p, title, text: shown.append(text)))
+    window.on_model_load_error("model broke")
+    assert window.status_subtext.text() == "Details in logs\\facegen.log"
+    window.generator_thread = None
+    window._generating = True
+    window.generation_error("generation broke")
+    assert all("Details were saved to:\nC:/project/logs/facegen.log" in t for t in shown) and len(shown) == 2
+
+
 # ── cancel and close ───────────────────────────────────────────────────────
 def test_cancel_stops_the_run_early(qapp, window):
     start(window, 6)
