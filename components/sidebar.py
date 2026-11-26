@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QSize, QRegExp
 from PyQt5.QtGui import QFont, QRegExpValidator
 
-from engine import AGE_BUCKETS
+from latents import AGE_BUCKETS
 from .constants import MAX_IMAGES
 from .icons import svg_pixmap, make_icon
 from .widgets import ElidedLabel, StepperEdit
