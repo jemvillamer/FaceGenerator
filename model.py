@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 def model_path():
-    return os.path.join(config.cache_dir, downloads.MODEL_FILE)
+    return config.data_file(downloads.MODEL_FILE)
 
 
 def load_model(download=True):
