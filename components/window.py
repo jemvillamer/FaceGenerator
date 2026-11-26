@@ -1,6 +1,7 @@
 """Main window: wires the sidebar, preview panel and the behaviour mixins together."""
 from PyQt5.QtWidgets import QMainWindow, QWidget, QHBoxLayout
 
+from .constants import DEFAULT_IMAGE_COUNT
 from .controls import ControlsMixin
 from .gallery import GalleryMixin
 from .generation import GenerationMixin
@@ -30,7 +31,7 @@ class FaceGeneratorApp(ControlsMixin, StatusMixin, GenerationMixin, GalleryMixin
         self._images = []  # list of {"path": str, "icon": QIcon}; full image is read from path
         self._current_index = 0
         self._thumb_start = 0
-        self._image_count = 20
+        self._image_count = DEFAULT_IMAGE_COUNT
         self._output_dir = default_output_dir()
         self._status_phase = "loading"
 
@@ -50,6 +51,7 @@ class FaceGeneratorApp(ControlsMixin, StatusMixin, GenerationMixin, GalleryMixin
 
         hl.addWidget(build_sidebar(self))
         hl.addWidget(build_preview_panel(self), 1)
+        self._apply_filter_defaults()  # the same defaults Reset restores
         self._set_status("loading", "Loading model...", "Please wait", show_check=False)
 
     def closeEvent(self, event):

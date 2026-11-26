@@ -9,8 +9,16 @@ from PyQt5.QtCore import QThread, pyqtSignal
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox
 
+from components.constants import DEFAULT_AGE, DEFAULT_GENDER, DEFAULT_IMAGE_COUNT, GENDERS
 from conftest import DummyContext, FakeEstimator, FakeGs, pump_until
 from latents import AGE_BUCKETS
+
+
+def filter_state(w):
+    """What the filters are set to: (age, gender sent to the engine, gender button
+    shown as selected, image count, count shown in the stepper)."""
+    return (w.age_combo.currentData(), w._selected_gender(), w.gender_group.checkedId(),
+            w._image_count, w.stepper_input.text())
 
 
 class NoLoad(QThread):
@@ -28,7 +36,7 @@ def window(qapp, regression_cache, tmp_path, monkeypatch):
     monkeypatch.setattr(gen, "ModelLoaderThread", NoLoad)
     from components.window import FaceGeneratorApp
     w = FaceGeneratorApp()
-    w.initial_age = w.age_combo.currentData()
+    w.startup_state = filter_state(w)   # before the fixture changes anything
     w.out = tmp_path / "out"
     w.out.mkdir()
     w._output_dir = str(w.out)
@@ -82,7 +90,37 @@ def test_age_dropdown_is_built_from_the_bucket_table(window):
     items = [(window.age_combo.itemText(i), window.age_combo.itemData(i))
              for i in range(window.age_combo.count())]
     assert items == [("Any", "Any")] + [(b.label, b.key) for b in AGE_BUCKETS]
-    assert window.initial_age == "35-50 years old"
+
+
+def test_startup_uses_the_filter_defaults(window):
+    assert window.startup_state == (DEFAULT_AGE, DEFAULT_GENDER, GENDERS.index(DEFAULT_GENDER),
+                                    DEFAULT_IMAGE_COUNT, str(DEFAULT_IMAGE_COUNT))
+    assert window.startup_state[:2] == ("Any", "Any")   # no filters until the user picks some
+
+
+def test_reset_restores_exactly_the_startup_state(window):
+    window.age_combo.setCurrentIndex(window.age_combo.findData("50+ years old"))
+    window.gender_group.button(GENDERS.index("Male")).setChecked(True)
+    window._set_image_count(137)
+    assert filter_state(window) != window.startup_state
+    window.reset_filters()
+    assert filter_state(window) == window.startup_state
+
+
+def test_defaults_are_valid_choices(window):
+    assert window.age_combo.findData(DEFAULT_AGE) >= 0
+    assert DEFAULT_GENDER in GENDERS
+
+
+def test_gender_sent_to_the_engine_does_not_depend_on_button_labels(qapp, window):
+    for i, value in enumerate(GENDERS):
+        window.gender_group.button(i).setText(f"Label {i}")   # e.g. renamed or translated
+        window.gender_group.button(i).setChecked(True)
+        assert window._selected_gender() == value
+    window.gender_group.button(GENDERS.index("Female")).setChecked(True)
+    start(window, 1)
+    assert window.generator_thread.gender == "Female"
+    wait_done(qapp, window)
 
 
 def test_a_run_locks_browse_and_turns_generate_into_cancel(qapp, window):

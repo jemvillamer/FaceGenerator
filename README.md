@@ -89,10 +89,13 @@ This only happens once. Subsequent launches are instant.
 ### Using the app
 
 1. **Output Directory** - click **Browse** to choose where generated images are saved (defaults to `output/`)
-2. **Number of Images** - how many faces to generate (1-1000)
-3. **Age Range** - select a bucket or leave as **Any**
-4. **Gender** - Male, Female, or Any
+2. **Number of Images** - how many faces to generate (1-1000, default 20)
+3. **Age Range** - select a bucket or leave as **Any** (default)
+4. **Gender** - Male, Female, or Any (default)
 5. Click **Generate Images**
+
+**Reset** (next to FILTERS) returns age, gender and number of images to these defaults,
+the same state the app starts in.
 
 Generated images are saved as `generated_0000.png`, `generated_0001.png`, ... in the output directory.
 Each run continues numbering after the highest existing `generated_NNNN.png`, so earlier images are never overwritten.

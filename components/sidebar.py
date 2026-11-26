@@ -10,7 +10,7 @@ from PyQt5.QtCore import Qt, QSize, QRegExp
 from PyQt5.QtGui import QFont, QRegExpValidator
 
 from latents import AGE_BUCKETS
-from .constants import MAX_IMAGES
+from .constants import GENDERS, MAX_IMAGES
 from .icons import svg_pixmap, make_icon
 from .widgets import ElidedLabel, StepperEdit
 
@@ -136,7 +136,6 @@ def build_sidebar(window):
     window.age_combo.addItem("Any", "Any")
     for bucket in AGE_BUCKETS:
         window.age_combo.addItem(bucket.label, bucket.key)
-    window.age_combo.setCurrentIndex(window.age_combo.findData("35-50 years old"))
     window.age_combo.setCursor(Qt.PointingHandCursor)
     vl.addWidget(window.age_combo)
 
@@ -150,14 +149,15 @@ def build_sidebar(window):
     g_row.setSpacing(0)
     window.gender_group = QButtonGroup(window)
     window.gender_group.setExclusive(True)
-    for i, label in enumerate(["Any", "Female", "Male"]):
-        btn = QPushButton(label)
+    for i, value in enumerate(GENDERS):  # button id i <-> GENDERS[i]
+        btn = QPushButton(value)
         btn.setCheckable(True)
         btn.setCursor(Qt.PointingHandCursor)
         window.gender_group.addButton(btn, i)
         g_row.addWidget(btn, 1)
-    window.gender_group.button(1).setChecked(True)
     vl.addWidget(gender_wrap)
+    # the selected age, gender and image count come from the defaults:
+    # FaceGeneratorApp.initUI applies them once the sidebar exists
 
     vl.addStretch(1)
 
