@@ -93,6 +93,17 @@ AGE_RANGES = {
     "50+ years old":   (51, 75),
 }
 
+# Measured response of rendered faces to the calibrated age edit, per
+# truncation_psi:  InsightFace age ≈ intercept + slope × calibrated predicted age.
+# Truncation pulls faces toward the average face, and the ridge fit overstates
+# the age signal, so real faces move only ~0.4-0.5 years per predicted year.
+# _set_age inverts this to aim the edit. Fitted on 360 rendered faces against
+# the current cache/age_regression.npz; re-measure after recalibrating.
+AGE_RESPONSE = {
+    0.7: (20.28, 0.515),
+    0.5: (26.13, 0.414),
+}
+
 # Layers used for age editing in W+ space (coarse+mid for 1024px StyleGAN v1)
 # StyleGAN v1 @ 1024px has 18 style layers (0..17). We edit 0-11 (coarse+mid).
 AGE_EDIT_LAYERS = list(range(12))   # indices 0-11
@@ -182,7 +193,7 @@ class LatentDirections:
         """Predict age for a single z vector (shape (512,))."""
         return float(z.ravel() @ self.age_coef + self.age_bias)
 
-    def _set_age(self, z, target_age, max_shift=4.0):
+    def _set_age(self, z, target_age, max_shift=4.0, truncation_psi=None):
         """
         Move z so that its predicted age equals target_age.
         Only called in regression mode. age_dir is scaled so that one unit
@@ -190,17 +201,24 @@ class LatentDirections:
         units (Euclidean length) so the latent never leaves the model's
         training distribution. Extreme age buckets pass a higher max_shift
         (up to 7.0).
+        If truncation_psi has a measured response in AGE_RESPONSE, the target
+        is converted to the predicted age that renders at target_age.
         """
         z = z.astype('float64')
+        if truncation_psi in AGE_RESPONSE:
+            intercept, slope = AGE_RESPONSE[truncation_psi]
+            target_age = (target_age - intercept) / slope
         current = float(z.ravel() @ self.age_coef + self.age_bias)
         max_years = max_shift / np.linalg.norm(self.age_dir)  # latent cap -> years
         delta   = float(np.clip(target_age - current, -max_years, max_years))
         return z + delta * self.age_dir.reshape(1, -1)
 
-    def apply_filters(self, latents, age, gender):
+    def apply_filters(self, latents, age, gender, truncation_psi=None):
         """
         Apply age and gender edits to Z latents.
         latents: (1, 512) float32.  Returns: (1, 512) float32.
+        truncation_psi: the value the latents will be rendered with; lets the
+        calibrated age edit correct for it (see AGE_RESPONSE).
         """
         z = latents.astype('float64')
 
@@ -211,7 +229,8 @@ class LatentDirections:
             if self._age_mode == 'regression':
                 lo, hi = AGE_RANGES[age]
                 target = float(np.random.uniform(lo, hi))
-                z = self._set_age(z, target, max_shift=7.0 if extreme else 4.0)
+                z = self._set_age(z, target, max_shift=7.0 if extreme else 4.0,
+                                  truncation_psi=truncation_psi)
             else:
                 # SVM fallback: safe direct offset, no regression math
                 scalar = self._svm_offsets.get(age, 0.0)
@@ -359,14 +378,16 @@ class GeneratorThread(QThread):
         }
         tol_lo, tol_hi = TOL.get(self.age, (3, 3))
 
+        # Extreme buckets use lower truncation for more variety
+        trunc = 0.5 if extreme else 0.7
+
         for attempt in range(max_tries):
+            if self.isInterruptionRequested():
+                return None, None  # cancelled: don't wait out the retries
             rnd     = np.random.RandomState(None)
             latents = rnd.randn(1, self.Gs.input_shape[1]).astype('float32')
             latents = latent_modifier.apply_filters(
-                latents, self.age, self.gender)
-
-            # Extreme buckets use lower truncation for more variety
-            trunc = 0.5 if extreme else 0.7
+                latents, self.age, self.gender, truncation_psi=trunc)
 
             images = self.Gs.run(latents, None,
                                  truncation_psi=trunc,
