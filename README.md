@@ -28,7 +28,8 @@ A desktop application for generating photorealistic human faces using **StyleGAN
 | **RAM** | >= 8 GB | Model loading + inference is memory-heavy on CPU |
 | **Disk** | >= 1.5 GB free | Model + cache files |
 
-> **Windows note:** A Python 3.7.9 installer (`python-3.7.9-amd64.exe`) is included in the repo for convenience.
+> **Windows note:** Python 3.7.9 for Windows (`python-3.7.9-amd64.exe`, "Windows x86-64 executable installer")
+> is available from [python.org](https://www.python.org/downloads/release/python-379/).
 
 ---
 
@@ -157,7 +158,7 @@ FaceGenerator/
 |-- requirements-dev.txt      # Test dependencies (pytest)
 |-- pytest.ini                # Test settings (markers, default selection)
 |-- tests/                    # pytest suite (see "Running the Tests")
-├── ui/
+├── components/
 │   ├── window.py                   # FaceGeneratorApp: __init__ and wiring only
 │   │                               
 │   ├── sidebar.py                  # build_sidebar(window): output, filters, status card, Generate button
