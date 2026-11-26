@@ -13,6 +13,7 @@ A desktop application for generating photorealistic human faces using **StyleGAN
 - [Project Structure](#project-structure)
 - [Filters Reference](#filters-reference)
 - [Troubleshooting](#troubleshooting)
+- [License](#license)
 
 ---
 
@@ -237,5 +238,27 @@ The app runs correctly on CPU regardless.
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
+
+---
+
+## License
+
+This project is built on NVIDIA's [StyleGAN](https://github.com/NVlabs/stylegan).
+The NVIDIA material (the code in `dnnlib/`, `training/`, `metrics/` and the other files
+carrying the NVIDIA copyright header, and the pretrained FFHQ model the app downloads) is
+licensed under [Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/);
+see [LICENSE.txt](LICENSE.txt).
+
+- **Non-commercial use only.** For commercial use, see [NVIDIA Research Licensing](https://www.nvidia.com/en-us/research/inquiries/).
+- **Credit.** Cite the StyleGAN paper and indicate the changes you made:
+
+  > **A Style-Based Generator Architecture for Generative Adversarial Networks**<br>
+  > Tero Karras, Samuli Laine, Timo Aila (NVIDIA) — https://arxiv.org/abs/1812.04948
+
+  This project adds a desktop UI (`app.py`, `components/`), latent age and gender editing
+  (`engine.py`) and an age calibration script (`scripts/`) on top of the original code.
+
+The age and gender boundary vectors (from [InterFaceGAN](https://github.com/genforce/interfacegan))
+and the optional InsightFace models are third-party material under their own license terms.
 
 
