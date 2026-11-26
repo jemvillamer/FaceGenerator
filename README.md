@@ -131,7 +131,9 @@ The next time you start the app you will see:
 ```
 FaceGenerator/
 |-- app.py                    # PyQt5 UI -- main entry point
-|-- engine.py                 # StyleGAN loading, LatentDirections, generation threads
+|-- engine.py                 # LatentDirections, age estimator, generation threads
+|-- model.py                  # Load the pretrained StyleGAN model (download + checksum)
+|-- tf_compat.py              # CPU patches so the NCHW model runs on TensorFlow CPU
 |-- config.py                 # Paths (cache dir, model dir)
 |-- downloads.py              # Downloaded files, their checksums, verified download helpers
 |-- style.qss                 # Qt stylesheet for the UI

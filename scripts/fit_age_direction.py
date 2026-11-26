@@ -24,7 +24,6 @@ For a quick smoke-test use --samples 200 (less accurate but finishes in ~3 min).
 import argparse
 import os
 import sys
-import pickle
 import numpy as np
 
 # ── make sure the project root is on sys.path ──────────────────────────────
@@ -33,67 +32,10 @@ sys.path.insert(0, ROOT)
 
 import config                                # noqa: E402 – project config
 
-# ── monkey-patches (same as app.py) so the pkl loads on CPU ────────────────
-import tensorflow as tf
-
-_orig_conv2d_transpose = tf.nn.conv2d_transpose
-def _cpu_conv2d_transpose(value, filters=None, output_shape=None, strides=None,
-                          padding='SAME', data_format='NHWC', dilations=None,
-                          name=None, filter=None):
-    filters = filters if filters is not None else filter
-    if data_format == 'NCHW':
-        value = tf.transpose(value, [0, 2, 3, 1])
-        if isinstance(output_shape, (list, tuple)):
-            output_shape = [output_shape[0], output_shape[2], output_shape[3], output_shape[1]]
-        else:
-            output_shape = tf.stack([output_shape[0], output_shape[2], output_shape[3], output_shape[1]])
-        if strides is not None and len(strides) == 4:
-            strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_conv2d_transpose(value, filters, output_shape, strides, padding, 'NHWC', dilations, name)
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_conv2d_transpose(value, filters, output_shape, strides, padding, data_format, dilations, name)
-tf.nn.conv2d_transpose = _cpu_conv2d_transpose
-
-_orig_depthwise_conv2d = tf.nn.depthwise_conv2d
-def _cpu_depthwise_conv2d(input, filter, strides, padding, rate=None,
-                          name=None, data_format=None):
-    if data_format == 'NCHW':
-        input = tf.transpose(input, [0, 2, 3, 1])
-        strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_depthwise_conv2d(input, filter, strides, padding,
-                                        rate=rate, name=name, data_format='NHWC')
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_depthwise_conv2d(input, filter, strides, padding,
-                                  rate=rate, name=name, data_format=data_format)
-tf.nn.depthwise_conv2d = _cpu_depthwise_conv2d
-
-_orig_avg_pool = tf.nn.avg_pool
-def _cpu_avg_pool(value, ksize, strides, padding, data_format='NHWC', name=None, input=None):
-    val = value if value is not None else input
-    if data_format == 'NCHW':
-        val = tf.transpose(val, [0, 2, 3, 1])
-        ksize   = [ksize[0],   ksize[2],   ksize[3],   ksize[1]]
-        strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_avg_pool(val, ksize, strides, padding, 'NHWC', name)
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_avg_pool(val, ksize, strides, padding, data_format, name)
-tf.nn.avg_pool = _cpu_avg_pool
-
-_orig_conv2d = tf.nn.conv2d
-def _cpu_conv2d(input, filter=None, strides=None, padding=None, use_cudnn_on_gpu=True,
-                data_format='NHWC', dilations=None, name=None, filters=None):
-    filt = filter if filter is not None else filters
-    if data_format == 'NCHW':
-        input = tf.transpose(input, [0, 2, 3, 1])
-        if strides is not None and len(strides) == 4:
-            strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_conv2d(input, filt, strides, padding, use_cudnn_on_gpu, 'NHWC', dilations, name)
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_conv2d(input, filt, strides, padding, use_cudnn_on_gpu, data_format, dilations, name)
-tf.nn.conv2d = _cpu_conv2d
-
-import dnnlib.tflib as tflib  # noqa: E402
-import downloads              # noqa: E402 – model checksum, shared with the app
+# model.py installs the CPU patches (tf_compat) and loads/verifies the model,
+# shared with the app.
+import model                 # noqa: E402
+import downloads              # noqa: E402
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -111,13 +53,6 @@ def parse_args():
                    help='Output .npz path (default: %(default)s, '
                         'where the app looks for it)')
     return p.parse_args()
-
-
-def load_stylegan(model_path):
-    tflib.init_tf({'allow_soft_placement': True, 'log_device_placement': False})
-    with open(model_path, 'rb') as f:
-        _G, _D, Gs = pickle.load(f)
-    return Gs
 
 
 def build_age_estimator(thumb_size):
@@ -155,18 +90,17 @@ def main():
     args = parse_args()
     rng  = np.random.RandomState(args.seed)
 
-    model_path = os.path.join(config.cache_dir, downloads.MODEL_FILE)
-    if not os.path.exists(model_path):
-        raise SystemExit(f"Model not found at {model_path}. "
-                          "Run the main app once to download it.")
+    model_path = model.model_path()
+    print(f"[fit_age_direction] Loading StyleGAN from {model_path} …")
     try:
-        downloads.verify_existing(model_path, downloads.MODEL_SHA256)  # before unpickling
+        # never downloads here; checksummed before unpickling
+        Gs, _session, _graph = model.load_model(download=False)
+    except FileNotFoundError:
+        raise SystemExit(f"Model not found at {model_path}. "
+                         "Run the main app once to download it.")
     except downloads.ChecksumError as e:
         raise SystemExit(str(e))
-
-    print(f"[fit_age_direction] Loading StyleGAN from {model_path} …")
-    Gs = load_stylegan(model_path)
-    fmt = dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True)
+    fmt = model.OUTPUT_TRANSFORM
 
     print("[fit_age_direction] Building InsightFace age estimator …")
     estimate_age = build_age_estimator(args.thumb)

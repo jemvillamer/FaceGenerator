@@ -1,83 +1,11 @@
 import os
 import re
-import pickle
 import numpy as np
 import PIL.Image
 from PyQt5.QtCore import QThread, pyqtSignal
-import tensorflow as tf
 
-# ---------------------------------------------------------------------------
-# CPU compatibility monkey-patches
-# The pretrained StyleGAN pkl contains frozen graph nodes that use NCHW format,
-# which TF does NOT support on CPU for several ops. We intercept these calls
-# and transparently redirect them to NHWC by transposing around the op.
-# This must happen BEFORE any model loading or TF graph construction.
-# ---------------------------------------------------------------------------
-
-_orig_conv2d_transpose = tf.nn.conv2d_transpose
-def _cpu_conv2d_transpose(value, filters=None, output_shape=None, strides=None,
-                           padding='SAME', data_format='NHWC', dilations=None,
-                           name=None, filter=None):
-    filters = filters if filters is not None else filter
-    if data_format == 'NCHW':
-        value = tf.transpose(value, [0, 2, 3, 1])
-        if isinstance(output_shape, (list, tuple)):
-            output_shape = [output_shape[0], output_shape[2], output_shape[3], output_shape[1]]
-        else:
-            output_shape = tf.stack([output_shape[0], output_shape[2], output_shape[3], output_shape[1]])
-        if strides is not None and len(strides) == 4:
-            strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_conv2d_transpose(value, filters, output_shape, strides,
-                                        padding, 'NHWC', dilations, name)
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_conv2d_transpose(value, filters, output_shape, strides,
-                                   padding, data_format, dilations, name)
-tf.nn.conv2d_transpose = _cpu_conv2d_transpose
-
-_orig_depthwise_conv2d = tf.nn.depthwise_conv2d
-def _cpu_depthwise_conv2d(input, filter, strides, padding, rate=None,
-                           name=None, data_format=None):
-    if data_format == 'NCHW':
-        input = tf.transpose(input, [0, 2, 3, 1])
-        strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_depthwise_conv2d(input, filter, strides, padding,
-                                         rate=rate, name=name, data_format='NHWC')
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_depthwise_conv2d(input, filter, strides, padding,
-                                   rate=rate, name=name, data_format=data_format)
-tf.nn.depthwise_conv2d = _cpu_depthwise_conv2d
-
-_orig_avg_pool = tf.nn.avg_pool
-def _cpu_avg_pool(value, ksize, strides, padding, data_format='NHWC', name=None, input=None):
-    val = value if value is not None else input
-    if data_format == 'NCHW':
-        val = tf.transpose(val, [0, 2, 3, 1])
-        ksize   = [ksize[0],   ksize[2],   ksize[3],   ksize[1]]
-        strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_avg_pool(val, ksize, strides, padding, 'NHWC', name)
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_avg_pool(val, ksize, strides, padding, data_format, name)
-tf.nn.avg_pool = _cpu_avg_pool
-
-_orig_conv2d = tf.nn.conv2d
-def _cpu_conv2d(input, filter=None, strides=None, padding=None, use_cudnn_on_gpu=True,
-                data_format='NHWC', dilations=None, name=None, filters=None):
-    filt = filter if filter is not None else filters
-    if data_format == 'NCHW':
-        input = tf.transpose(input, [0, 2, 3, 1])
-        if strides is not None and len(strides) == 4:
-            strides = [strides[0], strides[2], strides[3], strides[1]]
-        result = _orig_conv2d(input, filt, strides, padding,
-                              use_cudnn_on_gpu, 'NHWC', dilations, name)
-        return tf.transpose(result, [0, 3, 1, 2])
-    return _orig_conv2d(input, filt, strides, padding,
-                        use_cudnn_on_gpu, data_format, dilations, name)
-tf.nn.conv2d = _cpu_conv2d
-
-# ---------------------------------------------------------------------------
-
-import dnnlib
-import dnnlib.tflib as tflib
+# model.py installs the CPU compatibility patches (tf_compat) on import.
+from model import load_model, OUTPUT_TRANSFORM  # noqa: F401 (load_model re-exported)
 import config
 import downloads
 from downloads import ChecksumError
@@ -306,32 +234,6 @@ class _AgeEstimator:
             return None
 
 
-def load_model():
-    """Initialize TF and load the pretrained StyleGAN model."""
-    import gdown
-
-    tflib.init_tf({"allow_soft_placement": True, "log_device_placement": False})
-
-    os.makedirs(config.cache_dir, exist_ok=True)
-    model_path = os.path.join(config.cache_dir, downloads.MODEL_FILE)
-
-    # Unpickling runs code, so the file is checked before it's loaded (~0.5 s)
-    if not os.path.exists(model_path):
-        print("Downloading pretrained model (~325MB)...")
-        downloads.fetch_verified(
-            lambda tmp: gdown.download(id=downloads.MODEL_GDRIVE_ID, output=tmp, quiet=False),
-            model_path, downloads.MODEL_SHA256)
-    else:
-        downloads.verify_existing(model_path, downloads.MODEL_SHA256)
-
-    print("Loading model...")
-    with open(model_path, 'rb') as f:
-        _G, _D, Gs = pickle.load(f)
-
-    print("Model loaded successfully.")
-    return Gs, tf.get_default_session(), tf.get_default_graph()
-
-
 _OUTPUT_NAME_RE = re.compile(r'^generated_(\d+)\.png$', re.IGNORECASE)
 
 
@@ -425,7 +327,7 @@ class GeneratorThread(QThread):
 
     def run(self):
         try:
-            fmt = dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True)
+            fmt = OUTPUT_TRANSFORM
             latent_modifier = LatentDirections()
             os.makedirs(self.output_dir, exist_ok=True)
             file_index = next_output_index(self.output_dir)
