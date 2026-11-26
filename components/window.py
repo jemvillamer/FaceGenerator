@@ -22,8 +22,10 @@ class FaceGeneratorApp(ControlsMixin, StatusMixin, GenerationMixin, GalleryMixin
         self.Gs = None
         self.tf_session = None
         self.tf_graph = None
+        self.generator_thread = None
         self._total_count = 0
         self._generating = False
+        self._cancelling = False
         self._follow_latest = True  # big preview follows each new image
         self._images = []  # list of {"path": str, "array": ndarray, "icon": QIcon}
         self._current_index = 0
@@ -49,3 +51,13 @@ class FaceGeneratorApp(ControlsMixin, StatusMixin, GenerationMixin, GalleryMixin
         hl.addWidget(build_sidebar(self))
         hl.addWidget(build_preview_panel(self), 1)
         self._set_status("loading", "Loading model...", "Please wait", show_check=False)
+
+    def closeEvent(self, event):
+        # Stop a running generation and wait for it: exiting with the worker
+        # still running can kill it mid-save and leave a truncated PNG.
+        # The wait is at most one render.
+        thread = self.generator_thread
+        if thread is not None and thread.isRunning():
+            thread.requestInterruption()
+            thread.wait()
+        super().closeEvent(event)

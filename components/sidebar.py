@@ -200,13 +200,13 @@ def build_sidebar(window):
 
     vl.addSpacing(14)
 
-    window.gen_btn = QPushButton("  Generate images")
+    window.gen_btn = QPushButton()
     window.gen_btn.setObjectName("gen_btn")
-    window.gen_btn.setIcon(make_icon("sparkle", "#ffffff", "#4a5266", size=20))
     window.gen_btn.setIconSize(QSize(20, 20))
+    window._set_gen_button_mode("generate")  # label + icon; doubles as Cancel during a run
     window.gen_btn.setEnabled(False)
     window.gen_btn.setCursor(Qt.PointingHandCursor)
-    window.gen_btn.clicked.connect(window.generate_images)
+    window.gen_btn.clicked.connect(window.on_gen_btn_clicked)
     vl.addWidget(window.gen_btn)
 
     return sidebar

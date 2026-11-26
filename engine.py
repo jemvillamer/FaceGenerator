@@ -337,9 +337,11 @@ def next_output_index(output_dir):
 
 
 class GeneratorThread(QThread):
-    progress = pyqtSignal(int)
-    finished = pyqtSignal(str)
-    preview  = pyqtSignal(np.ndarray, str)   # (image, path it was saved to)
+    progress  = pyqtSignal(int)
+    # (images saved, cancelled). Not named `finished`: that would hide
+    # QThread's own finished signal.
+    completed = pyqtSignal(int, bool)
+    preview   = pyqtSignal(np.ndarray, str)   # (image, path it was saved to)
     error    = pyqtSignal(str)
 
     def __init__(self, num_images, age, gender, output_dir, Gs, session, graph):
@@ -357,7 +359,8 @@ class GeneratorThread(QThread):
         Closed-loop generation: keep retrying until the generated image's
         estimated age falls within the requested range (with per-bucket
         tolerance), or until max_tries is exhausted.
-        Returns (img_data, latents).
+        Returns (img_data, latents), or (None, None) if the run was cancelled
+        before an image was accepted.
         """
         lo, hi = AGE_RANGES.get(self.age, (None, None))
         use_validation = (lo is not None and
@@ -416,6 +419,7 @@ class GeneratorThread(QThread):
             latent_modifier = LatentDirections()
             os.makedirs(self.output_dir, exist_ok=True)
             file_index = next_output_index(self.output_dir)
+            saved = 0
 
             with self.graph.as_default():
                 with self.session.as_default():
@@ -423,6 +427,8 @@ class GeneratorThread(QThread):
                         if self.isInterruptionRequested():
                             break
                         img_data, _ = self._generate_one(latent_modifier, fmt)
+                        if img_data is None:
+                            break  # cancelled mid-retry; nothing to save
                         png_filename = os.path.join(
                             self.output_dir, f'generated_{file_index:04d}.png')
                         while os.path.exists(png_filename):  # file appeared mid-run
@@ -431,11 +437,11 @@ class GeneratorThread(QThread):
                                 self.output_dir, f'generated_{file_index:04d}.png')
                         file_index += 1
                         PIL.Image.fromarray(img_data, 'RGB').save(png_filename)
+                        saved += 1
                         self.progress.emit(i + 1)
                         self.preview.emit(img_data, png_filename)
 
-            self.finished.emit(
-                f"Successfully generated {self.num_images} images in:\n{self.output_dir}")
+            self.completed.emit(saved, saved < self.num_images)
         except Exception as e:
             import traceback
             self.error.emit(traceback.format_exc())
