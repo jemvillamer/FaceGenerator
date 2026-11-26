@@ -16,6 +16,7 @@ ICONS = {
     "alert": '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
     "clock": '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
     "dot": '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1.5"/>',
+    "x": '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
 }
 
 

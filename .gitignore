@@ -3,3 +3,7 @@
 cache/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+output/
+python-*.exe
+logs/

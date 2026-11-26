@@ -1,7 +1,9 @@
 """Sidebar control logic: number-of-images stepper (buttons or typed), gender, reset."""
 import numpy as np
 
-from .constants import MAX_IMAGES
+from .constants import (
+    DEFAULT_AGE, DEFAULT_GENDER, DEFAULT_IMAGE_COUNT, GENDERS, MAX_IMAGES,
+)
 
 
 class ControlsMixin:
@@ -29,10 +31,16 @@ class ControlsMixin:
         self._set_image_count(self._read_image_count() + delta)
 
     def _selected_gender(self):
-        checked = self.gender_group.checkedButton()
-        return checked.text() if checked else "Any"
+        # by button id, not label text, so relabelling a button can't change
+        # what the engine receives
+        gid = self.gender_group.checkedId()
+        return GENDERS[gid] if gid >= 0 else "Any"
+
+    def _apply_filter_defaults(self):
+        """Set age, gender and image count to the defaults (startup and Reset)."""
+        self.age_combo.setCurrentIndex(self.age_combo.findData(DEFAULT_AGE))
+        self.gender_group.button(GENDERS.index(DEFAULT_GENDER)).setChecked(True)
+        self._set_image_count(DEFAULT_IMAGE_COUNT)
 
     def reset_filters(self):
-        self.age_combo.setCurrentIndex(0)
-        self.gender_group.button(0).setChecked(True)
-        self._set_image_count(20)
+        self._apply_filter_defaults()

@@ -9,7 +9,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QSize, QRegExp
 from PyQt5.QtGui import QFont, QRegExpValidator
 
-from .constants import MAX_IMAGES
+from latents import AGE_BUCKETS
+from .constants import GENDERS, MAX_IMAGES
 from .icons import svg_pixmap, make_icon
 from .widgets import ElidedLabel, StepperEdit
 
@@ -72,14 +73,14 @@ def build_sidebar(window):
     row_out.setSpacing(8)
     window.path_input = ElidedLabel(window._output_dir)
     window.path_input.setObjectName("path_input")
-    btn_browse = QPushButton("  Browse")
-    btn_browse.setObjectName("browse_btn")
-    btn_browse.setIcon(make_icon("folder", "#8ab8ff", size=18))
-    btn_browse.setIconSize(QSize(18, 18))
-    btn_browse.setCursor(Qt.PointingHandCursor)
-    btn_browse.clicked.connect(window.browse_output)
+    window.btn_browse = QPushButton("  Browse")
+    window.btn_browse.setObjectName("browse_btn")
+    window.btn_browse.setIcon(make_icon("folder", "#8ab8ff", "#4a5266", size=18))
+    window.btn_browse.setIconSize(QSize(18, 18))
+    window.btn_browse.setCursor(Qt.PointingHandCursor)
+    window.btn_browse.clicked.connect(window.browse_output)
     row_out.addWidget(window.path_input, 1)
-    row_out.addWidget(btn_browse)
+    row_out.addWidget(window.btn_browse)
     vl.addLayout(row_out)
 
     vl.addSpacing(16)
@@ -131,18 +132,10 @@ def build_sidebar(window):
     vl.addSpacing(4)
     window.age_combo = QComboBox()
     window.age_combo.setView(QListView())  # lets QSS style the popup items
-    # (label shown to the user, exact value the engine already expects)
-    for shown, value in [
-        ("Any", "Any"),
-        ("1\u201311 years old", "1-11 years old"),
-        ("12\u201318 years old", "12-18 years old"),
-        ("19\u201325 years old", "19-25 years old"),
-        ("26\u201335 years old", "26-35 years old"),
-        ("35\u201350 years old", "35-50 years old"),
-        ("50+ years old", "50+ years old"),
-    ]:
-        window.age_combo.addItem(shown, value)
-    window.age_combo.setCurrentIndex(window.age_combo.findData("35-50 years old"))
+    # items: (label shown to the user, bucket key the engine expects)
+    window.age_combo.addItem("Any", "Any")
+    for bucket in AGE_BUCKETS:
+        window.age_combo.addItem(bucket.label, bucket.key)
     window.age_combo.setCursor(Qt.PointingHandCursor)
     vl.addWidget(window.age_combo)
 
@@ -156,14 +149,15 @@ def build_sidebar(window):
     g_row.setSpacing(0)
     window.gender_group = QButtonGroup(window)
     window.gender_group.setExclusive(True)
-    for i, label in enumerate(["Any", "Female", "Male"]):
-        btn = QPushButton(label)
+    for i, value in enumerate(GENDERS):  # button id i <-> GENDERS[i]
+        btn = QPushButton(value)
         btn.setCheckable(True)
         btn.setCursor(Qt.PointingHandCursor)
         window.gender_group.addButton(btn, i)
         g_row.addWidget(btn, 1)
-    window.gender_group.button(1).setChecked(True)
     vl.addWidget(gender_wrap)
+    # the selected age, gender and image count come from the defaults:
+    # FaceGeneratorApp.initUI applies them once the sidebar exists
 
     vl.addStretch(1)
 
@@ -200,13 +194,13 @@ def build_sidebar(window):
 
     vl.addSpacing(14)
 
-    window.gen_btn = QPushButton("  Generate images")
+    window.gen_btn = QPushButton()
     window.gen_btn.setObjectName("gen_btn")
-    window.gen_btn.setIcon(make_icon("sparkle", "#ffffff", "#4a5266", size=20))
     window.gen_btn.setIconSize(QSize(20, 20))
+    window._set_gen_button_mode("generate")  # label + icon; doubles as Cancel during a run
     window.gen_btn.setEnabled(False)
     window.gen_btn.setCursor(Qt.PointingHandCursor)
-    window.gen_btn.clicked.connect(window.generate_images)
+    window.gen_btn.clicked.connect(window.on_gen_btn_clicked)
     vl.addWidget(window.gen_btn)
 
     return sidebar

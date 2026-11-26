@@ -5,10 +5,21 @@ from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox, QToolTip
 from PyQt5.QtCore import QPoint, QRect, QByteArray, QBuffer, QIODevice, QMimeData
 from PyQt5.QtGui import QImage
 
-from .qt_helpers import array_to_pixmap, array_to_qimage
+from .qt_helpers import load_image
 
 
 class ImageActionsMixin:
+    def _load_current_image(self, entry, action):
+        """Read the current image from its file; warn and return None if it's gone."""
+        image = load_image(entry["path"])
+        if image is None:
+            QMessageBox.warning(
+                self, f"{action} Failed",
+                f"The image file could not be read:\n{entry['path']}\n\n"
+                "It may have been moved or deleted.",
+            )
+        return image
+
     def save_current_as(self):
         entry = self._current_entry()
         if not entry:
@@ -17,15 +28,28 @@ class ImageActionsMixin:
         path, _ = QFileDialog.getSaveFileName(
             self, "Save Image As", default_name, "PNG Images (*.png);;All Files (*)"
         )
-        if path:
-            array_to_pixmap(entry["array"]).save(path)
+        if not path:
+            return
+        image = self._load_current_image(entry, "Save")
+        if image is None:
+            return
+        if not image.save(path):  # format comes from the extension
+            QMessageBox.warning(
+                self, "Save Failed",
+                f"Could not save the image as:\n{path}\n\n"
+                "Use a supported extension such as .png or .jpg, and check "
+                "that the folder is writable.",
+            )
 
     def copy_current_image(self):
         entry = self._current_entry()
         if not entry:
             return
+        image = self._load_current_image(entry, "Copy")
+        if image is None:
+            return
         try:
-            image = array_to_qimage(entry["array"]).convertToFormat(QImage.Format_RGB32)
+            image = image.convertToFormat(QImage.Format_RGB32)
             png = QByteArray()
             buf = QBuffer(png)
             buf.open(QIODevice.WriteOnly)

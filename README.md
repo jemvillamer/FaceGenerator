@@ -12,7 +12,9 @@ A desktop application for generating photorealistic human faces using **StyleGAN
 - [Optional: Age Calibration (Recommended)](#optional-age-calibration-recommended)
 - [Project Structure](#project-structure)
 - [Filters Reference](#filters-reference)
+- [Running the Tests](#running-the-tests)
 - [Troubleshooting](#troubleshooting)
+- [License](#license)
 
 ---
 
@@ -22,11 +24,12 @@ A desktop application for generating photorealistic human faces using **StyleGAN
 |---|---|---|
 | **Python** | **3.7.x** | Strictly 3.7 — TF 1.15 does not support 3.8+ |
 | **pip** | any recent | bundled with Python |
-| **Internet connection** | — | First run downloads the model (~350 MB) and boundary vectors |
+| **Internet connection** | — | First run downloads the model (~325 MB) and boundary vectors |
 | **RAM** | >= 8 GB | Model loading + inference is memory-heavy on CPU |
 | **Disk** | >= 1.5 GB free | Model + cache files |
 
-> **Windows note:** A Python 3.7.9 installer (`python-3.7.9-amd64.exe`) is included in the repo for convenience.
+> **Windows note:** Python 3.7.9 for Windows (`python-3.7.9-amd64.exe`, "Windows x86-64 executable installer")
+> is available from [python.org](https://www.python.org/downloads/release/python-379/).
 
 ---
 
@@ -78,7 +81,7 @@ python app.py
 ```
 
 On first launch the app will automatically:
-1. Download the pretrained StyleGAN FFHQ model (~350 MB) into `cache/`
+1. Download the pretrained StyleGAN FFHQ model (~325 MB) into `cache/`
 2. Download the age and gender boundary vectors from InterFaceGAN into `cache/`
 
 This only happens once. Subsequent launches are instant.
@@ -86,12 +89,16 @@ This only happens once. Subsequent launches are instant.
 ### Using the app
 
 1. **Output Directory** - click **Browse** to choose where generated images are saved (defaults to `output/`)
-2. **Number of Images** - how many faces to generate (1-1000)
-3. **Age Range** - select a bucket or leave as **Any**
-4. **Gender** - Male, Female, or Any
+2. **Number of Images** - how many faces to generate (1-1000, default 20)
+3. **Age Range** - select a bucket or leave as **Any** (default)
+4. **Gender** - Male, Female, or Any (default)
 5. Click **Generate Images**
 
+**Reset** (next to FILTERS) returns age, gender and number of images to these defaults,
+the same state the app starts in.
+
 Generated images are saved as `generated_0000.png`, `generated_0001.png`, ... in the output directory.
+Each run continues numbering after the highest existing `generated_NNNN.png`, so earlier images are never overwritten.
 A live preview is shown in the right panel.
 
 ---
@@ -107,10 +114,10 @@ python scripts\fit_age_direction.py --samples 2000
 ```
 
 This takes **~20-30 minutes on CPU**. When it finishes it writes `cache/age_regression.npz`.
-The next time you start the app you will see:
+The next time you generate images, the console and `logs\facegen.log` show:
 
 ```
-[LatentDirections] Using calibrated ridge-regression age direction.
+[latents] Using calibrated ridge-regression age direction.
 ```
 
 ### Calibration options
@@ -122,6 +129,19 @@ The next time you start the app you will see:
 | `--alpha` | `0.001` | Ridge regularisation strength |
 | `--out` | `cache/age_regression.npz` | Output file path |
 
+### After recalibrating: re-measure the age response
+
+Rendered faces move less than the calibration predicts, so `latents.py` holds a measured
+correction (`AGE_RESPONSE`). After running `fit_age_direction.py` again, re-measure it:
+
+```powershell
+python scripts\measure_age_response.py
+```
+
+It renders real faces (~12 minutes on CPU), prints a new `AGE_RESPONSE` table to paste into
+`latents.py`, and reports how many faces land in each age bucket. Use `--fit-samples` and
+`--report-samples` to trade accuracy for time.
+
 ---
 
 ## Project Structure
@@ -129,11 +149,20 @@ The next time you start the app you will see:
 ```
 FaceGenerator/
 |-- app.py                    # PyQt5 UI -- main entry point
-|-- engine.py                 # StyleGAN loading, LatentDirections, generation threads
+|-- engine.py                 # Qt threads: model loading and generation, reported via signals
+|-- latents.py                # Age buckets (AGE_BUCKETS) and the latent age/gender edits
+|-- generator.py              # Generation core: age-check retries, batch run, output numbering
+|-- model.py                  # Load the pretrained StyleGAN model (download + checksum)
+|-- tf_compat.py              # CPU patches so the NCHW model runs on TensorFlow CPU
 |-- config.py                 # Paths (cache dir, model dir)
+|-- downloads.py              # Downloaded files, their checksums, verified download helpers
+|-- log_setup.py              # Logging: console, logs/facegen.log, quieter TensorFlow, error hook
 |-- style.qss                 # Qt stylesheet for the UI
 |-- requirements.txt          # Pinned Python dependencies
-├── ui/
+|-- requirements-dev.txt      # Test dependencies (pytest)
+|-- pytest.ini                # Test settings (markers, default selection)
+|-- tests/                    # pytest suite (see "Running the Tests")
+├── components/
 │   ├── window.py                   # FaceGeneratorApp: __init__ and wiring only
 │   │                               
 │   ├── sidebar.py                  # build_sidebar(window): output, filters, status card, Generate button
@@ -163,7 +192,8 @@ FaceGenerator/
 │   └── image_actions.py            # Image operations: Save as, Copy, Delete
 |
 |-- scripts/
-|   `-- fit_age_direction.py  # One-time age calibration script
+|   |-- fit_age_direction.py     # One-time age calibration script
+|   `-- measure_age_response.py  # Re-measure AGE_RESPONSE after recalibrating
 |
 |-- dnnlib/                   # NVIDIA dnnlib (TF graph utilities)
 |-- training/                 # StyleGAN training code (not needed to run the app)
@@ -175,6 +205,7 @@ FaceGenerator/
 |   |-- stylegan_ffhq_gender_boundary.npy       # SVM boundary (auto-downloaded)
 |   `-- age_regression.npz                      # Created by fit_age_direction.py
 |
+|-- logs/                     # facegen.log (auto-created; see "Where to find logs")
 `-- output/                   # Default output folder for generated images
 ```
 
@@ -205,15 +236,41 @@ Selecting **Any** leaves gender untouched (random from the model).
 
 ---
 
+## Running the Tests
+
+```powershell
+pip install -r requirements-dev.txt   # once: installs pytest
+python -m pytest                      # ~100 tests, ~15 s; needs neither the model nor internet
+python -m pytest -m model             # tests with the real model in cache/ (~20 s)
+python -m pytest -m network           # checks the pinned boundary downloads (needs internet)
+```
+
+The default run uses small synthetic boundary/calibration files and a fake generator
+network, so it works on a fresh checkout. The UI tests run offscreen; no window appears.
+
+---
+
 ## Troubleshooting
+
+### Where to find logs
+- The app writes `logs\facegen.log` in the project folder (rotated at 1 MB, 3 backups kept).
+  It has timestamps, each generation run with a summary (images saved, time taken, how
+  many attempts the age check rejected), every age-check retry, and full details of any error.
+- Error dialogs show this path. Attach the file when reporting a problem.
+- The console shows the same events without the per-retry detail.
 
 ### App will not start / import errors
 - Make sure you activated `.venv37` before running `python app.py`.
 - Confirm Python version is 3.7: `python --version`
 
 ### "Model loading..." never finishes
-- Check your internet connection -- the model (~350 MB) must download on first run.
-- If the download was interrupted, delete the partial file in `cache/` and restart.
+- Check your internet connection -- the model (~325 MB) must download on first run.
+- An interrupted or failed download is discarded automatically (it never replaces the real file); just restart.
+
+### "doesn't match the expected checksum"
+- Every downloaded file is checked before use. This error means the file named in the
+  message is corrupt, incomplete or not the expected file, so it wasn't loaded.
+- Delete that file from `cache/` and restart the app to download it again.
 
 ### Images look psychedelic / corrupted
 - This was caused by the age latent edit going out of distribution.
@@ -225,16 +282,39 @@ Selecting **Any** leaves gender untouched (random from the model).
 ### InsightFace `ValueError: operands could not be broadcast ... shapes (18,) (32,)`
 - Was a `det_size=112` issue (not a multiple of 32). Fixed -- current version uses `det_size=160`.
 
-### TensorFlow CUDA / GPU warnings
+### TensorFlow CUDA / GPU messages
+TensorFlow's warnings and deprecation notices are hidden (errors still show), but one
+line remains on machines without an NVIDIA GPU:
 ```
-Could not load dynamic library 'cudart64_100.dll'
+E tensorflow/stream_executor/cuda/cuda_driver.cc:318] failed call to cuInit: UNKNOWN ERROR (303)
 ```
-This is harmless on a CPU-only machine. TF 1.15 always attempts to find CUDA.
-The app runs correctly on CPU regardless.
+This is harmless: TF 1.15 always looks for CUDA first. The app runs correctly on CPU.
 
 ### PowerShell execution policy error when activating venv
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
+
+---
+
+## License
+
+This project is built on NVIDIA's [StyleGAN](https://github.com/NVlabs/stylegan).
+The NVIDIA material (the code in `dnnlib/`, `training/`, `metrics/` and the other files
+carrying the NVIDIA copyright header, and the pretrained FFHQ model the app downloads) is
+licensed under [Creative Commons BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/);
+see [LICENSE.txt](LICENSE.txt).
+
+- **Non-commercial use only.** For commercial use, see [NVIDIA Research Licensing](https://www.nvidia.com/en-us/research/inquiries/).
+- **Credit.** Cite the StyleGAN paper and indicate the changes you made:
+
+  > **A Style-Based Generator Architecture for Generative Adversarial Networks**<br>
+  > Tero Karras, Samuli Laine, Timo Aila (NVIDIA) — https://arxiv.org/abs/1812.04948
+
+  This project adds a desktop UI (`app.py`, `components/`), latent age and gender editing
+  (`engine.py`) and an age calibration script (`scripts/`) on top of the original code.
+
+The age and gender boundary vectors (from [InterFaceGAN](https://github.com/genforce/interfacegan))
+and the optional InsightFace models are third-party material under their own license terms.
 
 

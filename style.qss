@@ -297,6 +297,24 @@ QPushButton#gen_btn:disabled {
     color: #5d6579;
 }
 
+/* During a run the Generate button becomes Cancel */
+QPushButton#gen_btn[mode="cancel"] {
+    background-color: transparent;
+    color: #ff9a9a;
+    border: 1px solid #5b4350;
+}
+
+QPushButton#gen_btn[mode="cancel"]:hover:enabled {
+    background-color: rgba(255, 154, 154, 0.08);
+    border-color: #7a5463;
+}
+
+QPushButton#gen_btn[mode="cancel"]:disabled {
+    background-color: transparent;
+    color: #5d6579;
+    border-color: #333948;
+}
+
 QPushButton#browse_btn {
     background-color: transparent;
     color: #8ab8ff;
@@ -309,9 +327,13 @@ QPushButton#browse_btn {
     padding: 0 14px;
 }
 
-QPushButton#browse_btn:hover {
+QPushButton#browse_btn:hover:enabled {
     background-color: rgba(138, 184, 255, 0.08);
     border-color: #4a5370;
+}
+
+QPushButton#browse_btn:disabled {
+    color: #5d6579;
 }
 
 QPushButton#nav_btn {

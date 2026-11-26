@@ -7,12 +7,18 @@
 
 """Global configuration."""
 
+import os
+
 #----------------------------------------------------------------------------
 # Paths.
 
 result_dir = 'results'
 data_dir = 'datasets'
-cache_dir = 'cache'
+# Anchored to the project folder (not the current directory), so launching
+# from anywhere finds the same downloaded model and calibration files.
+cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
+# App log files (see log_setup.py), also anchored to the project folder.
+log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
 run_dir_ignore = ['results', 'datasets', 'cache']
 
 #----------------------------------------------------------------------------

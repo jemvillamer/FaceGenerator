@@ -1,9 +1,12 @@
 """Stylesheet loading (style.qss) and the generated dropdown-chevron icon files."""
+import logging
 import os
 import tempfile
 
 from .icons import svg_pixmap
 from .paths import PROJECT_DIR
+
+log = logging.getLogger(__name__)
 
 
 def prepare_icon_files():
@@ -25,6 +28,6 @@ def load_stylesheet():
         with open(qss_path, "r", encoding="utf-8") as f:
             qss = f.read()
     except FileNotFoundError:
-        print(f"[Warning] style.qss not found at {qss_path}. Running without stylesheet.")
+        log.warning("style.qss not found at %s; running without the stylesheet.", qss_path)
         return ""
     return qss.replace("@CHEVRON_DOWN@", prepare_icon_files())

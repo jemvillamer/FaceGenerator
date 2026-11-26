@@ -1,4 +1,7 @@
-"""Small Qt/numpy helpers: re-polish, array -> QImage/QPixmap, rounded pixmaps, thumbnail icons."""
+"""Small Qt/numpy helpers: re-polish, array -> QImage/QPixmap, loading images from disk,
+rounded pixmaps, thumbnail icons."""
+import os
+
 import numpy as np
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QPixmap, QImage, QIcon, QPainter, QPainterPath
@@ -30,6 +33,15 @@ def array_to_pixmap(img_array, max_size=None):
             max_size, max_size, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
     return pixmap
+
+
+def load_image(path):
+    """Read an image file from disk. Returns a QImage, or None if the file is
+    missing or can't be decoded."""
+    if not os.path.isfile(path):
+        return None
+    image = QImage(path)
+    return None if image.isNull() else image
 
 
 def _rounded(src, size, radius, scale=2.0):
