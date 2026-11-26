@@ -4,8 +4,9 @@ A desktop application for generating photorealistic human faces using **StyleGAN
 
 There are two ways to use it:
 
-- **Install the app.** You need the Windows installer, `FaceGeneratorSetup-<version>.exe`, and
-  nothing else: no Python and no terminal. See [Installing the App](#installing-the-app).
+- **Install the app.** Download the Windows installer from the
+  [Releases page](https://github.com/jemvillamer/FaceGenerator/releases). You need nothing
+  else: no Python and no terminal. See [Installing the App](#installing-the-app).
 - **Run it from source.** For developers working on the code. Start at
   [Prerequisites](#prerequisites).
 
@@ -42,9 +43,11 @@ No GPU, Python or admin rights are needed.
 
 ### Install
 
-1. Get the installer, `FaceGeneratorSetup-<version>.exe`, from whoever built it. To build
-   it yourself, see [Building the Desktop App and Installer](#building-the-desktop-app-and-installer).
-2. Double-click it.
+1. Download the installer from the
+   [Releases page](https://github.com/jemvillamer/FaceGenerator/releases): open the newest
+   release, and under **Assets** click `FaceGeneratorSetup-<version>.exe`. To build it
+   yourself instead, see [Building the Desktop App and Installer](#building-the-desktop-app-and-installer).
+2. Double-click the downloaded file (usually in your **Downloads** folder).
 3. Windows may show **"Windows protected your PC"**, because the installer isn't code-signed.
    Click **More info**, then **Run anyway**.
 4. Follow the wizard:
@@ -86,7 +89,9 @@ To open one of these folders, paste its path into File Explorer's address bar.
 
 ### Updating
 
-Run the installer for the newer version. It replaces the old version in place, and
+Download the newer installer from the
+[Releases page](https://github.com/jemvillamer/FaceGenerator/releases) and run it. It
+replaces the old version in place, and
 your downloaded models and generated images are kept. Close the app first, or let the
 installer close it.
 
@@ -382,7 +387,22 @@ It takes about 10 minutes and does four things:
 3. Runs the bundled app's self-test (`FaceGenerator.exe --self-test <folder>`). This loads
    the model and generates one face with the age check, so a broken bundle stops the build.
 4. Builds the installer with Inno Setup (`packaging\installer.iss`):
-   `dist\installer\FaceGeneratorSetup-<version>.exe`. Give users this one file.
+   `dist\installer\FaceGeneratorSetup-<version>.exe`. This one file is all users need.
+
+**Publishing a release.** Users download the installer from the
+[Releases page](https://github.com/jemvillamer/FaceGenerator/releases), so upload each new
+version there:
+
+1. Merge the changes into `main`, then build with the new version number
+   (`.\packaging\build.ps1 -Version 1.1.0`).
+2. On GitHub, go to **Releases > Draft a new release**.
+3. Under **Choose a tag**, type `v1.1.0` (matching the version), choose
+   **Create new tag on publish**, and target `main`.
+4. Title it **StyleGAN Face Generator 1.1.0**, and describe what changed.
+5. Drag `dist\installer\FaceGeneratorSetup-1.1.0.exe` into **Attach binaries**, wait for
+   the upload to finish, then click **Publish release**.
+
+If the repository is private, only its collaborators can download releases.
 
 **What gets shipped.** Besides the code, the app ships the boundary files and your
 `cache\age_regression.npz` if it exists, so the installed app has the same age calibration
