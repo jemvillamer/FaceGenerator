@@ -1,7 +1,9 @@
-"""Outline icons (Lucide-style SVGs) drawn at runtime, so no asset files ship with the project."""
+"""Outline icons (Lucide-style SVGs) drawn at runtime, plus the app logo (packaging/logo.png)."""
 from PyQt5.QtCore import Qt, QByteArray
 from PyQt5.QtGui import QPixmap, QIcon, QPainter
 from PyQt5.QtSvg import QSvgRenderer
+
+from .paths import APP_LOGO
 
 
 ICONS = {
@@ -48,3 +50,15 @@ def make_icon(name, color, disabled_color=None, stroke=2.0, size=20):
     if disabled_color:
         icon.addPixmap(svg_pixmap(name, disabled_color, size, stroke), QIcon.Disabled)
     return icon
+
+
+def logo_pixmap(size, scale=2.0):
+    """The app logo at `size` logical pixels (crisp on high-DPI screens).
+    An empty pixmap if packaging/logo.png is missing."""
+    pm = QPixmap(APP_LOGO)
+    if pm.isNull():
+        return pm
+    px = int(size * scale)
+    pm = pm.scaled(px, px, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    pm.setDevicePixelRatio(scale)
+    return pm

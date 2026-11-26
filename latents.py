@@ -93,7 +93,7 @@ class LatentDirections:
         self.gender_boundary = self._load_or_download('stylegan_ffhq_gender_boundary.npy')
         self.gender_boundary /= np.linalg.norm(self.gender_boundary)
 
-        reg_path = os.path.join(config.cache_dir, 'age_regression.npz')
+        reg_path = config.data_file('age_regression.npz')
         if os.path.exists(reg_path):
             data = np.load(reg_path)
             self.age_coef = data['age_coef'].astype('float64')
@@ -140,7 +140,7 @@ class LatentDirections:
     def _load_or_download(self, filename):
         import urllib.request
         os.makedirs(config.cache_dir, exist_ok=True)
-        filepath = os.path.join(config.cache_dir, filename)
+        filepath = config.data_file(filename)
         expected = downloads.BOUNDARY_SHA256[filename]
         if not os.path.exists(filepath):
             log.info("Downloading %s ...", filename)

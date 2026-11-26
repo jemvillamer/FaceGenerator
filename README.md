@@ -13,6 +13,7 @@ A desktop application for generating photorealistic human faces using **StyleGAN
 - [Project Structure](#project-structure)
 - [Filters Reference](#filters-reference)
 - [Running the Tests](#running-the-tests)
+- [Building the Desktop App and Installer](#building-the-desktop-app-and-installer)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
@@ -154,7 +155,7 @@ FaceGenerator/
 |-- generator.py              # Generation core: age-check retries, batch run, output numbering
 |-- model.py                  # Load the pretrained StyleGAN model (download + checksum)
 |-- tf_compat.py              # CPU patches so the NCHW model runs on TensorFlow CPU
-|-- config.py                 # Paths (cache dir, model dir)
+|-- config.py                 # Paths (cache dir, log dir; different for the installed app)
 |-- downloads.py              # Downloaded files, their checksums, verified download helpers
 |-- log_setup.py              # Logging: console, logs/facegen.log, quieter TensorFlow, error hook
 |-- style.qss                 # Qt stylesheet for the UI
@@ -162,6 +163,13 @@ FaceGenerator/
 |-- requirements-dev.txt      # Test dependencies (pytest)
 |-- pytest.ini                # Test settings (markers, default selection)
 |-- tests/                    # pytest suite (see "Running the Tests")
+|-- requirements-build.txt    # Build dependencies (PyInstaller)
+|-- packaging/                # Desktop app + installer (see "Building the Desktop App")
+|   |-- build.ps1             # Runs the whole build
+|   |-- facegen.spec          # PyInstaller bundle definition
+|   |-- installer.iss         # Inno Setup installer script
+|   |-- logo.png              # App logo (window, taskbar, sidebar header)
+|   `-- make_icon.py          # Makes facegen.ico (.exe/installer icon) from logo.png
 ├── components/
 │   ├── window.py                   # FaceGeneratorApp: __init__ and wiring only
 │   │                               
@@ -250,10 +258,72 @@ network, so it works on a fresh checkout. The UI tests run offscreen; no window 
 
 ---
 
+## Building the Desktop App and Installer
+
+`packaging\build.ps1` turns the app into a normal Windows program: a
+`FaceGenerator.exe` that runs without Python, and a setup wizard that installs it
+with a Start-menu shortcut and an uninstaller. Users don't need Python or a terminal.
+
+**One-time setup** (in addition to [Setup](#setup)):
+
+```powershell
+.\.venv37\Scripts\python.exe -m pip install -r requirements-build.txt   # PyInstaller
+winget install JRSoftware.InnoSetup                                     # installer compiler
+```
+
+**Build:**
+
+```powershell
+.\packaging\build.ps1                          # version 1.0.0
+.\packaging\build.ps1 -Version 1.1.0           # set the version shown in Windows
+.\packaging\build.ps1 -IncludeModel            # ship the model: works offline from first launch
+```
+
+It takes about 10 minutes and does four things:
+
+1. Makes the Windows icon from `packaging\logo.png` (`packaging\make_icon.py`).
+2. Bundles the app with PyInstaller (`packaging\facegen.spec`) into `dist\FaceGenerator\`.
+3. Runs the bundled app's self-test (`FaceGenerator.exe --self-test <folder>`). This loads
+   the model and generates one face with the age check, so a broken bundle stops the build.
+4. Builds the installer with Inno Setup (`packaging\installer.iss`):
+   `dist\installer\FaceGeneratorSetup-<version>.exe`. Give users this one file.
+
+**What gets shipped.** Besides the code, the app ships the boundary files and your
+`cache\age_regression.npz` if it exists, so the installed app has the same age calibration
+as your checkout. The model (~325 MB) is downloaded on first launch, unless you build
+with `-IncludeModel`. The InsightFace age-check model (`buffalo_l`) is always downloaded
+on first use, into `%USERPROFILE%\.insightface`.
+
+**Where the installed app keeps its files.** The install folder can be read-only, so the
+installed app writes elsewhere:
+
+| What | Where |
+|---|---|
+| Downloaded model, boundary files | `%LOCALAPPDATA%\FaceGenerator\cache\` |
+| Log file | `%LOCALAPPDATA%\FaceGenerator\logs\facegen.log` |
+| Generated images (default) | `%USERPROFILE%\FaceGenerator\output\` |
+
+Uninstalling asks whether to delete the downloaded model and logs. Generated images are
+always kept.
+
+**Things to know:**
+- The installed app takes about 1.3 GB, mostly TensorFlow, plus the model.
+- It only runs on 64-bit Windows. A Mac or Linux version would have to be built on
+  those systems.
+- Windows SmartScreen will warn "Windows protected your PC" on other computers, because the
+  installer isn't code-signed. Users click **More info > Run anyway**. Removing the
+  warning needs a code-signing certificate.
+- If you share the installer, the license terms below still apply. This is especially
+  important with `-IncludeModel`, because the installer then contains NVIDIA's model:
+  non-commercial use only, with credit.
+
+---
+
 ## Troubleshooting
 
 ### Where to find logs
 - The app writes `logs\facegen.log` in the project folder (rotated at 1 MB, 3 backups kept).
+  The installed app writes `%LOCALAPPDATA%\FaceGenerator\logs\facegen.log` instead.
   It has timestamps, each generation run with a summary (images saved, time taken, how
   many attempts the age check rejected), every age-check retry, and full details of any error.
 - Error dialogs show this path. Attach the file when reporting a problem.
